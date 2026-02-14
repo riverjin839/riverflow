@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: trading-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: trading-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: trading
+            - name: POSTGRES_USER
+              value: trading
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: trading-db-creds
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: init-scripts
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: trading-system
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: trading-system
+data:
+  01-schema.sql: |
+    -- pgvector extension 활성화
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    CREATE TABLE trade_journal (
+        id SERIAL PRIMARY KEY,
+        trade_date DATE NOT NULL,
+        ticker VARCHAR(10) NOT NULL,
+        ticker_name VARCHAR(50),
+        buy_price DECIMAL(12,2),
+        sell_price DECIMAL(12,2),
+        quantity INTEGER,
+        profit_rate DECIMAL(6,2),
+        buy_reason TEXT,
+        ai_feedback TEXT,
+        chart_image_path VARCHAR(255),
+        tags TEXT[],
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE market_briefing (
+        id SERIAL PRIMARY KEY,
+        briefing_type VARCHAR(20) NOT NULL,
+        raw_data JSONB,
+        summary TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE news_articles (
+        id SERIAL PRIMARY KEY,
+        source VARCHAR(50),
+        title VARCHAR(500),
+        content TEXT,
+        url VARCHAR(500),
+        keywords TEXT[],
+        embedding vector(768),
+        crawled_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE user_documents (
+        id SERIAL PRIMARY KEY,
+        doc_type VARCHAR(20),
+        title VARCHAR(200),
+        content TEXT,
+        embedding vector(768),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE search_conditions (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        conditions JSONB NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        auto_trade BOOLEAN DEFAULT false,
+        auto_trade_config JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE search_results (
+        id SERIAL PRIMARY KEY,
+        condition_id INTEGER REFERENCES search_conditions(id) ON DELETE CASCADE,
+        ticker VARCHAR(10),
+        ticker_name VARCHAR(50),
+        matched_at TIMESTAMPTZ DEFAULT NOW(),
+        price_at_match DECIMAL(12,2),
+        volume_at_match BIGINT,
+        match_details JSONB,
+        saved BOOLEAN DEFAULT false,
+        traded BOOLEAN DEFAULT false
+    );
+
+    CREATE TABLE auto_trade_orders (
+        id SERIAL PRIMARY KEY,
+        condition_id INTEGER REFERENCES search_conditions(id) ON DELETE SET NULL,
+        result_id INTEGER REFERENCES search_results(id) ON DELETE SET NULL,
+        order_id VARCHAR(50),
+        ticker VARCHAR(10) NOT NULL,
+        side VARCHAR(4) NOT NULL,
+        quantity INTEGER NOT NULL,
+        price DECIMAL(12,2) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'submitted',
+        broker VARCHAR(20) NOT NULL DEFAULT 'kis',
+        strategy_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Indexes
+    CREATE INDEX idx_news_embedding ON news_articles USING hnsw (embedding vector_cosine_ops);
+    CREATE INDEX idx_docs_embedding ON user_documents USING hnsw (embedding vector_cosine_ops);
+    CREATE INDEX idx_journal_trade_date ON trade_journal(trade_date);
+    CREATE INDEX idx_journal_ticker ON trade_journal(ticker);
+    CREATE INDEX idx_search_conditions_active ON search_conditions(is_active);
+    CREATE INDEX idx_search_results_condition ON search_results(condition_id);
+    CREATE INDEX idx_auto_orders_created ON auto_trade_orders(created_at);
+    CREATE INDEX idx_auto_orders_status ON auto_trade_orders(status);

@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: stop-loss-checker
+  namespace: trading-system
+spec:
+  schedule: "* 9-15 * * 1-5"  # 장중 1분마다 (월-금)
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: checker
+              image: trading-system/worker:latest
+              command: ["python", "-m", "workers.stop_loss_checker"]
+              envFrom:
+                - secretRef:
+                    name: kis-credentials
+                - secretRef:
+                    name: trading-db-creds
+                - configMapRef:
+                    name: trading-config
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql+asyncpg://trading:$(POSTGRES_PASSWORD)@postgres:5432/trading"
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "256Mi"
+                  cpu: "250m"
+          restartPolicy: OnFailure

@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: morning-briefing
+  namespace: trading-system
+spec:
+  schedule: "30 23 * * 0-4"  # 08:30 KST = 23:30 UTC 전날 (월-금)
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: briefing
+              image: trading-system/worker:latest
+              command: ["python", "-m", "workers.morning_briefing"]
+              envFrom:
+                - secretRef:
+                    name: trading-db-creds
+                - configMapRef:
+                    name: trading-config
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql+asyncpg://trading:$(POSTGRES_PASSWORD)@postgres:5432/trading"
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "200m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+          restartPolicy: OnFailure

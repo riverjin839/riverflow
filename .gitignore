@@ -1,2 +1,32 @@
 .vagrant
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+
+# Node.js
+node_modules/
+.next/
+out/
+
+# 환경 변수 / 시크릿 (절대 Git에 올리지 않는다)
+.env
+.env.*
+!.env.example
+*-credentials.yaml
+!*-credentials-sealed-example.yaml
+
+# IDE
+.vscode/
+.idea/
+
+# DB 백업
+backups/
+
+# 차트 이미지
+/tmp/charts/

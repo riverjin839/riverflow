@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app/ ./app/
+
+# 워커 코드는 프로젝트 루트의 workers/ 디렉토리에서 복사
+COPY --from=workers . ./workers/
+
+CMD ["python", "-m", "workers.condition_scanner"]

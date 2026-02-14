@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-review
+  namespace: trading-system
+spec:
+  schedule: "0 7 * * 1-5"  # 16:00 KST = 07:00 UTC (월-금)
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: review
+              image: trading-system/worker:latest
+              command: ["python", "-m", "workers.daily_review"]
+              envFrom:
+                - secretRef:
+                    name: trading-db-creds
+                - configMapRef:
+                    name: trading-config
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql+asyncpg://trading:$(POSTGRES_PASSWORD)@postgres:5432/trading"
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "200m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+          restartPolicy: OnFailure

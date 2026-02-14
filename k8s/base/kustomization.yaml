@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: trading-system
+
+resources:
+  - namespace.yaml
+  - postgres/postgres.yaml
+  - backend/backend.yaml
+  - frontend/frontend.yaml
+  - workers/condition-scanner.yaml
+  - workers/stop-loss-checker.yaml
+  - workers/realtime-feed.yaml
+  - workers/morning-briefing.yaml
+  - workers/news-crawler.yaml
+  - workers/daily-review.yaml
+
+configMapGenerator:
+  - name: trading-config
+    literals:
+      - OLLAMA_BASE_URL=http://host.k3d.internal:11434
+      - OLLAMA_MODEL=llama3
+      - EMBEDDING_MODEL=bge-m3
+      - KIS_IS_VIRTUAL=true

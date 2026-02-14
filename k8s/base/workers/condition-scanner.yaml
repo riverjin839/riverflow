@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: condition-scanner
+  namespace: trading-system
+spec:
+  schedule: "*/5 9-15 * * 1-5"  # 장중 5분마다 (월-금)
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: scanner
+              image: trading-system/worker:latest
+              command: ["python", "-m", "workers.condition_scanner"]
+              envFrom:
+                - secretRef:
+                    name: kis-credentials
+                - secretRef:
+                    name: trading-db-creds
+                - configMapRef:
+                    name: trading-config
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql+asyncpg://trading:$(POSTGRES_PASSWORD)@postgres:5432/trading"
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "200m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+          restartPolicy: OnFailure

@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-crawler
+  namespace: trading-system
+spec:
+  schedule: "0 */2 * * *"  # 2시간마다
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: crawler
+              image: trading-system/worker:latest
+              command: ["python", "-m", "workers.news_crawler"]
+              envFrom:
+                - secretRef:
+                    name: trading-db-creds
+                - configMapRef:
+                    name: trading-config
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql+asyncpg://trading:$(POSTGRES_PASSWORD)@postgres:5432/trading"
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "200m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+          restartPolicy: OnFailure
