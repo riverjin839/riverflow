@@ -6,6 +6,11 @@ CronJob으로 2시간마다 실행된다.
 
 import asyncio
 import logging
+import os
+
+from sqlalchemy import text as sql_text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 from backend.app.services.crawler import NewsCrawler
 from backend.app.services.embedding import EmbeddingService
@@ -15,8 +20,15 @@ logger = logging.getLogger(__name__)
 
 
 async def crawl_and_embed() -> None:
-    """뉴스 크롤링 + 임베딩 생성"""
+    """뉴스 크롤링 + 임베딩 생성 + DB 저장"""
     logger.info("뉴스 크롤링 시작")
+
+    db_url = os.environ.get(
+        "DATABASE_URL",
+        "postgresql+asyncpg://trading:trading@localhost:5432/trading",
+    )
+    engine = create_async_engine(db_url)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     crawler = NewsCrawler()
     embedding_svc = EmbeddingService()
@@ -25,17 +37,61 @@ async def crawl_and_embed() -> None:
         articles = await crawler.crawl_all()
         logger.info("크롤링된 뉴스: %d건", len(articles))
 
-        for article in articles:
-            text = f"{article.get('title', '')} {article.get('content', '')}"
-            embedding = await embedding_svc.embed(text)
-            article["embedding"] = embedding
+        if not articles:
+            logger.info("크롤링된 뉴스 없음. 종료.")
+            return
 
-        # TODO: DB 저장
+        # 임베딩 생성
+        for article in articles:
+            text_for_embed = f"{article.get('title', '')} {article.get('content', '')}"
+            try:
+                embedding = await embedding_svc.embed(text_for_embed)
+                article["embedding"] = embedding
+            except Exception:
+                logger.warning("임베딩 생성 실패: %s", article.get("title", "")[:50])
+                article["embedding"] = None
+
+        # DB 저장
+        async with async_session() as db:
+            saved_count = 0
+            for article in articles:
+                # 중복 체크 (URL 기준)
+                url = article.get("url", "")
+                if url:
+                    existing = await db.execute(
+                        sql_text("SELECT id FROM news_articles WHERE url = :url"),
+                        {"url": url},
+                    )
+                    if existing.fetchone():
+                        logger.debug("중복 뉴스 스킵: %s", url)
+                        continue
+
+                embedding = article.get("embedding")
+                await db.execute(
+                    sql_text(
+                        "INSERT INTO news_articles (source, title, content, url, keywords, embedding) "
+                        "VALUES (:source, :title, :content, :url, :keywords, :embedding)"
+                    ),
+                    {
+                        "source": article.get("source", ""),
+                        "title": article.get("title", ""),
+                        "content": article.get("content", ""),
+                        "url": url,
+                        "keywords": article.get("keywords", []),
+                        "embedding": str(embedding) if embedding else None,
+                    },
+                )
+                saved_count += 1
+
+            await db.commit()
+            logger.info("뉴스 %d건 DB 저장 완료", saved_count)
+
         logger.info("뉴스 크롤링 + 임베딩 완료")
 
     finally:
         await crawler.close()
         await embedding_svc.close()
+        await engine.dispose()
 
 
 if __name__ == "__main__":
