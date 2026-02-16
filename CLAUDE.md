@@ -7,8 +7,8 @@ backend/         Python FastAPI 백엔드 (app/, Dockerfile, Dockerfile.worker)
 frontend/        Next.js 15 TypeScript 프론트엔드
 workers/         독립 실행 워커 스크립트 (K8s CronJob/Deployment)
 kiwoom-bridge/   키움증권 Windows 브릿지 서버 (별도 머신)
-k8s/             Kubernetes 매니페스트 (Kustomize: base + overlays/local)
-scripts/         셸 스크립트 (setup-k3d, deploy, backup-db)
+k8s/             Kubernetes 매니페스트 (Kustomize: base + overlays/local|kind)
+scripts/         셸 스크립트 (setup-k3d, setup-kind, deploy, backup-db)
 ```
 
 ## 기술 스택
@@ -18,7 +18,7 @@ scripts/         셸 스크립트 (setup-k3d, deploy, backup-db)
 - **DB**: PostgreSQL 16 + pgvector (벡터 유사도 검색)
 - **LLM**: Ollama (llama3 생성, bge-m3 임베딩)
 - **Broker**: 한국투자증권(KIS) REST/WebSocket API
-- **Infra**: k3d (K3s), Kustomize, Docker, Traefik Ingress
+- **Infra**: k3d (K3s) 또는 Kind, Kustomize, Docker, Traefik/NGINX Ingress
 
 ## 빌드 및 실행
 
@@ -26,12 +26,16 @@ scripts/         셸 스크립트 (setup-k3d, deploy, backup-db)
 # 로컬 개발 (Docker 없이)
 make dev                    # uvicorn으로 백엔드만 실행
 
-# k3d 클러스터 셋업
+# --- k3d 환경 ---
 make setup                  # k3d 클러스터 + 레지스트리 생성
-
-# Docker 빌드 + K8s 배포
 make deploy                 # 빌드 -> 레지스트리 푸시 -> kubectl apply
 make build                  # 빌드만
+make clean                  # k3d 클러스터 삭제
+
+# --- Kind 환경 (Mac Mini 등) ---
+make setup-kind             # Kind 클러스터 + NGINX Ingress 설치
+make deploy-kind            # 빌드 -> kind load -> kubectl apply
+make clean-kind             # Kind 클러스터 삭제
 
 # 워커 이미지 빌드 (build-context 사용)
 docker build -t worker -f backend/Dockerfile.worker --build-context workers=./workers ./backend
@@ -50,6 +54,17 @@ docker build -t worker -f backend/Dockerfile.worker --build-context workers=./wo
 | 자동매매 엔진 | `backend/app/services/auto_trader.py` |
 | DB 스키마 | `k8s/base/postgres/init-scripts/01-schema.sql` |
 | 설정 | `backend/app/core/config.py`, `broker_config.py` |
+| K8s 오버레이 (k3d) | `k8s/overlays/local/` |
+| K8s 오버레이 (Kind) | `k8s/overlays/kind/` |
+
+## K8s 런타임 차이
+
+| | k3d (`overlays/local`) | Kind (`overlays/kind`) |
+|---|---|---|
+| Ingress | Traefik (내장) | NGINX (setup-kind.sh에서 설치) |
+| 이미지 로딩 | `docker push` → 로컬 레지스트리 | `kind load docker-image` |
+| Ollama 호스트 | `host.k3d.internal` | `host.docker.internal` |
+| imagePullPolicy | 기본 | `Never` (로컬 이미지 사용) |
 
 ## 아키텍처 핵심 포인트
 
