@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - patches/resource-limits.yaml
+  - patches/ingress-nginx.yaml
+  - patches/images.yaml
+
+# Kind 환경: Ollama 호스트가 host.docker.internal (Mac)
+configMapGenerator:
+  - name: trading-config
+    behavior: replace
+    literals:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3
+      - EMBEDDING_MODEL=bge-m3
+      - KIS_IS_VIRTUAL=true
+
+# 로컬 개발용 시크릿 (Git에 올리지 않는다)
+# secretGenerator:
+#   - name: kis-credentials
+#     envs:
+#       - secrets/kis.env
+#   - name: trading-db-creds
+#     envs:
+#       - secrets/db.env

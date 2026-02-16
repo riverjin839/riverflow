@@ -1,0 +1,41 @@
+# Kind 환경: 레지스트리 prefix 없이 로컬 이미지 사용
+# kind load docker-image 로 클러스터에 직접 로드하므로
+# imagePullPolicy: Never 설정 필요
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: trading-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          image: trading-system/backend:latest
+          imagePullPolicy: Never
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: trading-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: frontend
+          image: trading-system/frontend:latest
+          imagePullPolicy: Never
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-feed
+  namespace: trading-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: feed
+          image: trading-system/worker:latest
+          imagePullPolicy: Never
