@@ -3,7 +3,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import ai, auth, auto_trade, briefing, broker, condition, journal, news
+from .routers import (
+    ai,
+    alert,
+    auth,
+    auto_trade,
+    briefing,
+    broker,
+    condition,
+    journal,
+    news,
+    sector,
+    supply,
+)
 
 app = FastAPI(
     title="Trading System API",
@@ -31,6 +43,9 @@ app.include_router(ai.router)
 app.include_router(broker.router)
 app.include_router(condition.router)
 app.include_router(auto_trade.router)
+app.include_router(sector.router)
+app.include_router(alert.router)
+app.include_router(supply.router)
 
 
 @app.get("/api/health")

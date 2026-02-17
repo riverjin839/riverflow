@@ -36,7 +36,7 @@ CREATE TABLE market_briefing (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 뉴스 크롤링 결과
+-- 뉴스 크롤링 결과 (+ LLM 재료 분석)
 CREATE TABLE news_articles (
     id SERIAL PRIMARY KEY,
     source VARCHAR(50),
@@ -45,6 +45,9 @@ CREATE TABLE news_articles (
     url VARCHAR(500),
     keywords TEXT[],
     embedding vector(768),
+    impact_score SMALLINT DEFAULT 0,       -- 시장 영향력 (1~10)
+    theme VARCHAR(100),                     -- 관련 테마/섹터
+    is_leading BOOLEAN DEFAULT false,       -- 시장 주도 뉴스 여부
     crawled_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -106,7 +109,42 @@ CREATE TABLE auto_trade_orders (
 );
 
 -- =============================================================
--- 3. 인덱스
+-- 3. 전문가 트레이딩 로직 테이블
+-- =============================================================
+
+-- 섹터 분석 결과 (주기적 스냅샷)
+CREATE TABLE sector_analysis (
+    id SERIAL PRIMARY KEY,
+    sector_code VARCHAR(10) NOT NULL,
+    sector_name VARCHAR(50) NOT NULL,
+    market VARCHAR(10) NOT NULL,            -- KOSPI / KOSDAQ
+    top3_avg_change_rate DECIMAL(8,4),      -- 상위 3종목 평균 상승률
+    sector_volume_ratio DECIMAL(8,2),       -- 섹터 거래대금 전일비(%)
+    is_leading BOOLEAN DEFAULT false,       -- 주도 섹터 여부
+    leader_ticker VARCHAR(10),              -- 대장주 종목코드
+    leader_name VARCHAR(50),                -- 대장주 이름
+    leader_change_rate DECIMAL(8,4),        -- 대장주 등락률
+    details JSONB,                          -- 상위 종목 상세 정보
+    analyzed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 투자자별 수급 스냅샷 (1분 단위)
+CREATE TABLE supply_snapshots (
+    id SERIAL PRIMARY KEY,
+    snapshot_time TIMESTAMPTZ NOT NULL,
+    market VARCHAR(10) NOT NULL,            -- KOSPI / KOSDAQ
+    index_value DECIMAL(12,2),              -- 지수
+    index_change_rate DECIMAL(8,4),         -- 지수 등락률
+    foreign_net_buy BIGINT DEFAULT 0,       -- 외인 순매수(백만원)
+    institution_net_buy BIGINT DEFAULT 0,   -- 기관 순매수(백만원)
+    individual_net_buy BIGINT DEFAULT 0,    -- 개인 순매수(백만원)
+    foreign_trend VARCHAR(10),              -- 외인 추세: rising/falling/flat
+    institution_trend VARCHAR(10),          -- 기관 추세
+    details JSONB
+);
+
+-- =============================================================
+-- 4. 인덱스
 -- =============================================================
 
 -- pgvector HNSW 인덱스 (코사인 유사도 검색)
@@ -129,3 +167,9 @@ CREATE INDEX idx_search_results_matched ON search_results(matched_at);
 CREATE INDEX idx_auto_orders_ticker ON auto_trade_orders(ticker);
 CREATE INDEX idx_auto_orders_created ON auto_trade_orders(created_at);
 CREATE INDEX idx_auto_orders_status ON auto_trade_orders(status);
+CREATE INDEX idx_news_impact ON news_articles(impact_score) WHERE impact_score >= 8;
+CREATE INDEX idx_news_theme ON news_articles(theme) WHERE theme IS NOT NULL;
+CREATE INDEX idx_sector_analyzed ON sector_analysis(analyzed_at);
+CREATE INDEX idx_sector_leading ON sector_analysis(is_leading) WHERE is_leading = true;
+CREATE INDEX idx_supply_time ON supply_snapshots(snapshot_time);
+CREATE INDEX idx_supply_market ON supply_snapshots(market, snapshot_time);
