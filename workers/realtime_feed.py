@@ -2,13 +2,17 @@
 
 장중에 별도 Pod으로 실행되어 WebSocket 연결을 유지한다.
 수신된 체결 데이터를 DB에 기록하고 손절/익절 트리거를 발생시킨다.
+
+추가 기능:
+- 1분 단위 시장 지수 + 투자자별 수급 스냅샷 저장
+- 최근 10분간 외인/기관 순매수 추세 판단
 """
 
 import asyncio
 import json
 import logging
 import os
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 
 import httpx
@@ -32,6 +36,7 @@ class KISRealtimeFeed:
         self.app_secret = os.environ.get("KIS_APP_SECRET", "")
         self.is_virtual = os.environ.get("KIS_IS_VIRTUAL", "true").lower() == "true"
         self.approval_key: str | None = None
+        self._rest_token: str | None = None
 
         db_url = os.environ.get(
             "DATABASE_URL",
@@ -41,6 +46,7 @@ class KISRealtimeFeed:
         self.async_session = sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
+        self.rest_client = httpx.AsyncClient(timeout=30.0)
 
         # 최신 시세 캐시 (ticker -> price info)
         self.latest_prices: dict[str, dict] = {}
@@ -48,24 +54,55 @@ class KISRealtimeFeed:
         self._tick_buffer: list[dict] = []
         self._flush_interval = 10  # 10초마다 DB flush
 
+        # 수급 추적용 (최근 10분 = 10개 스냅샷)
+        self._supply_history: dict[str, deque] = {
+            "KOSPI": deque(maxlen=10),
+            "KOSDAQ": deque(maxlen=10),
+        }
+
+    @property
+    def _base_url(self) -> str:
+        if self.is_virtual:
+            return "https://openapivts.koreainvestment.com:29443"
+        return "https://openapi.koreainvestment.com:9443"
+
     async def _get_approval_key(self) -> str:
         """WebSocket 접속용 approval key 발급"""
-        base_url = (
-            "https://openapivts.koreainvestment.com:29443"
-            if self.is_virtual
-            else "https://openapi.koreainvestment.com:9443"
+        resp = await self.rest_client.post(
+            f"{self._base_url}/oauth2/Approval",
+            json={
+                "grant_type": "client_credentials",
+                "appkey": self.app_key,
+                "secretkey": self.app_secret,
+            },
         )
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{base_url}/oauth2/Approval",
-                json={
-                    "grant_type": "client_credentials",
-                    "appkey": self.app_key,
-                    "secretkey": self.app_secret,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()["approval_key"]
+        resp.raise_for_status()
+        return resp.json()["approval_key"]
+
+    async def _ensure_rest_token(self) -> None:
+        """REST API용 OAuth 토큰 발급"""
+        if self._rest_token:
+            return
+        resp = await self.rest_client.post(
+            f"{self._base_url}/oauth2/tokenP",
+            json={
+                "grant_type": "client_credentials",
+                "appkey": self.app_key,
+                "appsecret": self.app_secret,
+            },
+        )
+        resp.raise_for_status()
+        self._rest_token = resp.json()["access_token"]
+
+    def _build_headers(self, tr_id: str) -> dict:
+        """REST API 헤더 구성"""
+        return {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self._rest_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": tr_id,
+        }
 
     async def run(self, tickers: list[str]) -> None:
         """실시간 시세 수신 루프"""
@@ -74,8 +111,9 @@ class KISRealtimeFeed:
 
         logger.info("WebSocket 연결: %s (종목 %d개)", url, len(tickers))
 
-        # 주기적 DB flush 태스크 시작
+        # 주기적 태스크 시작
         flush_task = asyncio.create_task(self._periodic_flush())
+        supply_task = asyncio.create_task(self._periodic_supply_snapshot())
 
         try:
             async with websockets.connect(url, ping_interval=30) as ws:
@@ -105,6 +143,7 @@ class KISRealtimeFeed:
                         await self._process_tick(data)
         finally:
             flush_task.cancel()
+            supply_task.cancel()
             # 잔여 버퍼 flush
             if self._tick_buffer:
                 await self._flush_to_db()
@@ -156,11 +195,7 @@ class KISRealtimeFeed:
                 await self._flush_to_db()
 
     async def _flush_to_db(self) -> None:
-        """버퍼된 틱 데이터를 DB에 최신가로 업데이트
-
-        search_results 테이블의 최근 결과에 대해 현재가를 업데이트하여
-        손절/익절 체커가 최신 가격을 참조할 수 있게 한다.
-        """
+        """버퍼된 틱 데이터를 DB에 최신가로 업데이트"""
         # 종목별 마지막 틱만 사용 (최신가)
         latest_by_ticker: dict[str, dict] = {}
         for tick in self._tick_buffer:
@@ -175,7 +210,6 @@ class KISRealtimeFeed:
         try:
             async with self.async_session() as db:
                 for ticker, tick in latest_by_ticker.items():
-                    # search_results의 최근 결과에 현재가 업데이트
                     await db.execute(
                         text(
                             "UPDATE search_results "
@@ -197,8 +231,171 @@ class KISRealtimeFeed:
         except Exception:
             logger.exception("DB flush 실패")
 
+    # ================================================================
+    # 수급 연속성 추적
+    # ================================================================
+
+    async def _periodic_supply_snapshot(self) -> None:
+        """1분 단위로 시장 지수 + 투자자별 수급 스냅샷 저장"""
+        while True:
+            await asyncio.sleep(60)
+            for market in ["KOSPI", "KOSDAQ"]:
+                try:
+                    snapshot = await self._fetch_supply_snapshot(market)
+                    if snapshot:
+                        self._supply_history[market].append(snapshot)
+                        await self._save_supply_snapshot(snapshot)
+                except Exception:
+                    logger.exception("수급 스냅샷 실패: %s", market)
+
+    async def _fetch_supply_snapshot(self, market: str) -> dict | None:
+        """KIS API로 시장 지수 + 투자자별 수급 조회"""
+        await self._ensure_rest_token()
+
+        # 1) 시장 지수 조회
+        index_code = "0001" if market == "KOSPI" else "1001"
+        index_data = await self._fetch_market_index(index_code)
+        if not index_data:
+            return None
+
+        # 2) 투자자별 매매동향 조회
+        investor_data = await self._fetch_investor_trend(index_code)
+
+        now = datetime.now(timezone.utc)
+
+        # 추세 판단
+        history = self._supply_history[market]
+        foreign_trend = self._detect_trend(history, "foreign_net_buy")
+        institution_trend = self._detect_trend(history, "institution_net_buy")
+
+        return {
+            "snapshot_time": now.isoformat(),
+            "market": market,
+            "index_value": index_data.get("index_value", 0),
+            "index_change_rate": index_data.get("index_change_rate", 0),
+            "foreign_net_buy": investor_data.get("foreign_net_buy", 0),
+            "institution_net_buy": investor_data.get("institution_net_buy", 0),
+            "individual_net_buy": investor_data.get("individual_net_buy", 0),
+            "foreign_trend": foreign_trend,
+            "institution_trend": institution_trend,
+        }
+
+    async def _fetch_market_index(self, index_code: str) -> dict | None:
+        """KIS 업종 현재가 조회"""
+        try:
+            tr_id = "FHPUP02110000"
+            headers = self._build_headers(tr_id)
+            resp = await self.rest_client.get(
+                f"{self._base_url}/uapi/domestic-stock/v1/quotations/inquire-index-price",
+                headers=headers,
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "U",
+                    "FID_INPUT_ISCD": index_code,
+                },
+            )
+            resp.raise_for_status()
+            output = resp.json().get("output", {})
+            return {
+                "index_value": float(output.get("bstp_nmix_prpr", 0)),
+                "index_change_rate": float(output.get("bstp_nmix_prdy_ctrt", 0)),
+            }
+        except Exception:
+            logger.debug("시장 지수 조회 실패: %s", index_code)
+            return None
+
+    async def _fetch_investor_trend(self, index_code: str) -> dict:
+        """KIS 투자자별 매매동향 조회 (외인/기관/개인 순매수)"""
+        try:
+            tr_id = "FHPTJ04400000"
+            headers = self._build_headers(tr_id)
+            resp = await self.rest_client.get(
+                f"{self._base_url}/uapi/domestic-stock/v1/quotations/investor-trend-estimate",
+                headers=headers,
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "V",
+                    "FID_INPUT_ISCD": index_code,
+                },
+            )
+            resp.raise_for_status()
+            output = resp.json().get("output", [])
+            if not output:
+                return {}
+
+            # 첫 번째 항목이 최신 데이터
+            latest = output[0] if isinstance(output, list) else output
+            return {
+                "foreign_net_buy": int(latest.get("frgn_ntby_qty", 0)),
+                "institution_net_buy": int(latest.get("orgn_ntby_qty", 0)),
+                "individual_net_buy": int(latest.get("prsn_ntby_qty", 0)),
+            }
+        except Exception:
+            logger.debug("투자자 동향 조회 실패: %s", index_code)
+            return {}
+
+    @staticmethod
+    def _detect_trend(history: deque, field: str) -> str:
+        """최근 10분간 스냅샷에서 순매수 추세 판단.
+
+        - rising: 최근 5개 이상 스냅샷에서 값이 연속 증가
+        - falling: 최근 5개 이상 스냅샷에서 값이 연속 감소
+        - flat: 그 외
+        """
+        if len(history) < 3:
+            return "flat"
+
+        values = [s.get(field, 0) for s in history]
+
+        # 연속 증가/감소 카운트
+        increasing = 0
+        decreasing = 0
+        for i in range(1, len(values)):
+            if values[i] > values[i - 1]:
+                increasing += 1
+            elif values[i] < values[i - 1]:
+                decreasing += 1
+
+        total = len(values) - 1
+        if increasing >= total * 0.6:
+            return "rising"
+        elif decreasing >= total * 0.6:
+            return "falling"
+        return "flat"
+
+    async def _save_supply_snapshot(self, snapshot: dict) -> None:
+        """수급 스냅샷을 DB에 저장"""
+        try:
+            async with self.async_session() as db:
+                await db.execute(
+                    text(
+                        "INSERT INTO supply_snapshots "
+                        "(snapshot_time, market, index_value, index_change_rate, "
+                        "foreign_net_buy, institution_net_buy, individual_net_buy, "
+                        "foreign_trend, institution_trend, details) "
+                        "VALUES (:time, :market, :idx, :rate, "
+                        ":foreign, :institution, :individual, "
+                        ":f_trend, :i_trend, :details::jsonb)"
+                    ),
+                    {
+                        "time": snapshot["snapshot_time"],
+                        "market": snapshot["market"],
+                        "idx": snapshot["index_value"],
+                        "rate": snapshot["index_change_rate"],
+                        "foreign": snapshot["foreign_net_buy"],
+                        "institution": snapshot["institution_net_buy"],
+                        "individual": snapshot["individual_net_buy"],
+                        "f_trend": snapshot["foreign_trend"],
+                        "i_trend": snapshot["institution_trend"],
+                        "details": json.dumps(snapshot, ensure_ascii=False),
+                    },
+                )
+                await db.commit()
+                logger.debug("수급 스냅샷 저장: %s", snapshot["market"])
+        except Exception:
+            logger.exception("수급 스냅샷 DB 저장 실패")
+
     async def close(self) -> None:
         """리소스 정리"""
+        await self.rest_client.aclose()
         await self.engine.dispose()
 
 

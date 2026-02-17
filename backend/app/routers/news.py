@@ -15,10 +15,13 @@ router = APIRouter(prefix="/api/news", tags=["news"])
 
 class NewsResponse(BaseModel):
     id: int
-    source: str | None
-    title: str | None
-    url: str | None
-    keywords: list[str] | None
+    source: str | None = None
+    title: str | None = None
+    url: str | None = None
+    keywords: list[str] | None = None
+    impact_score: int = 0
+    theme: str | None = None
+    is_leading: bool = False
     crawled_at: str
 
     model_config = {"from_attributes": True}
@@ -28,13 +31,16 @@ class NewsResponse(BaseModel):
 async def list_news(
     skip: int = 0,
     limit: int = 20,
+    impact_min: int | None = Query(default=None, description="최소 영향도 필터"),
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(verify_token),
 ):
-    """뉴스 목록 조회"""
+    """뉴스 목록 조회 (impact_min으로 영향도 필터링 가능)"""
+    query = select(NewsArticle)
+    if impact_min is not None:
+        query = query.where(NewsArticle.impact_score >= impact_min)
     result = await db.execute(
-        select(NewsArticle)
-        .order_by(NewsArticle.crawled_at.desc())
+        query.order_by(NewsArticle.crawled_at.desc())
         .offset(skip)
         .limit(limit)
     )
