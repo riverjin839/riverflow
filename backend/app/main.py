@@ -12,6 +12,7 @@ from .routers import (
     broker,
     condition,
     journal,
+    market,
     news,
     sector,
     supply,
@@ -46,6 +47,7 @@ app.include_router(auto_trade.router)
 app.include_router(sector.router)
 app.include_router(alert.router)
 app.include_router(supply.router)
+app.include_router(market.router)
 
 
 @app.get("/api/health")
