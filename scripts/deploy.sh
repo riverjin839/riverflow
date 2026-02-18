@@ -60,6 +60,13 @@ echo ""
 echo "=== Kustomize 배포 ($OVERLAY) ==="
 kubectl apply -k "k8s/overlays/$OVERLAY"
 
+# Kind 배포 시 기존 실패한 CronJob Pod/Job 정리
+if [ "$OVERLAY" = "kind" ]; then
+    echo ""
+    echo "=== 기존 실패 Job 정리 ==="
+    kubectl delete jobs -n trading-system --field-selector status.successful=0 --ignore-not-found 2>/dev/null || true
+fi
+
 echo ""
 echo "=== 배포 상태 확인 ==="
 kubectl -n trading-system rollout status deployment/backend --timeout=120s

@@ -9,6 +9,16 @@ patchesStrategicMerge:
   - patches/ingress-nginx.yaml
   - patches/images.yaml
 
+# CronJob 워커: imagePullPolicy: Never (JSON Patch - strategic merge보다 확실)
+patches:
+  - target:
+      kind: CronJob
+      namespace: trading-system
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+
 # Kind 환경: Ollama 호스트가 host.docker.internal (Mac)
 configMapGenerator:
   - name: trading-config
