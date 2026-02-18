@@ -3,10 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 
-// ================================================================
-// Types
-// ================================================================
-
+/* ── Types ── */
 interface SupplyTrend {
   index_value: number;
   index_change_rate: number;
@@ -28,25 +25,15 @@ interface NewsItem {
   crawled_at: string;
 }
 
-interface TopStock {
-  ticker: string;
-  name: string;
-  change_rate: number;
-  volume_ratio: number;
-  price: number;
-}
-
 interface SectorItem {
   sector_name: string;
   market: string;
-  stock_count: number;
   top3_avg_change_rate: number;
   sector_volume_ratio: number;
   is_leading: boolean;
   leader_ticker: string;
   leader_name: string;
   leader_change_rate: number;
-  top_stocks: TopStock[];
 }
 
 interface AutoTradeStatus {
@@ -58,164 +45,156 @@ interface AutoTradeStatus {
   max_daily_amount: number;
 }
 
-// ================================================================
-// Helpers
-// ================================================================
-
-function trendIcon(trend: string): string {
-  if (trend === "rising") return "\u25B2";
-  if (trend === "falling") return "\u25BC";
-  return "\u25C6";
+/* ── Helpers ── */
+function trendArrow(t: string) {
+  if (t === "rising") return "▲";
+  if (t === "falling") return "▼";
+  return "―";
 }
 
-function trendColor(trend: string): string {
-  if (trend === "rising") return "#e74c3c";
-  if (trend === "falling") return "#3498db";
-  return "#95a5a6";
+function trendCls(t: string) {
+  if (t === "rising") return "text-up";
+  if (t === "falling") return "text-down";
+  return "text-flat";
 }
 
-function formatNumber(n: number): string {
-  if (Math.abs(n) >= 1_0000_0000) return (n / 1_0000_0000).toFixed(1) + "\uC5B5";
-  if (Math.abs(n) >= 1_0000) return (n / 1_0000).toFixed(0) + "\uB9CC";
+function fmtNum(n: number) {
+  if (Math.abs(n) >= 1_0000_0000) return (n / 1_0000_0000).toFixed(1) + "억";
+  if (Math.abs(n) >= 1_0000) return (n / 1_0000).toFixed(0) + "만";
   return n.toLocaleString();
 }
 
-// ================================================================
-// Component
-// ================================================================
-
+/* ── Component ── */
 export default function DashboardPage() {
   const [token, setToken] = useState<string | null>(null);
-  const [supplyTrend, setSupplyTrend] = useState<Record<string, SupplyTrend | null>>({});
-  const [highImpactNews, setHighImpactNews] = useState<NewsItem[]>([]);
+  const [supply, setSupply] = useState<Record<string, SupplyTrend | null>>({});
+  const [news, setNews] = useState<NewsItem[]>([]);
   const [sectors, setSectors] = useState<SectorItem[]>([]);
-  const [autoTradeStatus, setAutoTradeStatus] = useState<AutoTradeStatus | null>(null);
+  const [trade, setTrade] = useState<AutoTradeStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const stored = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    setToken(stored);
+    setToken(typeof window !== "undefined" ? localStorage.getItem("token") : null);
   }, []);
 
-  const fetchData = useCallback(async () => {
+  const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-
-    try {
-      const [supply, news, sectorData, tradeStatus] = await Promise.allSettled([
-        apiFetch<Record<string, SupplyTrend | null>>("/api/supply/trend", { token }),
-        apiFetch<NewsItem[]>("/api/news?impact_min=8&limit=10", { token }),
-        apiFetch<SectorItem[]>("/api/sectors/latest?limit=10", { token }),
-        apiFetch<AutoTradeStatus>("/api/auto-trade/status", { token }),
-      ]);
-
-      if (supply.status === "fulfilled") setSupplyTrend(supply.value);
-      if (news.status === "fulfilled") setHighImpactNews(news.value);
-      if (sectorData.status === "fulfilled") setSectors(sectorData.value);
-      if (tradeStatus.status === "fulfilled") setAutoTradeStatus(tradeStatus.value);
-    } catch {
-      // allSettled handles individual failures
-    } finally {
-      setLoading(false);
-    }
+    const [s, n, sec, t] = await Promise.allSettled([
+      apiFetch<Record<string, SupplyTrend | null>>("/api/supply/trend", { token }),
+      apiFetch<NewsItem[]>("/api/news?impact_min=8&limit=10", { token }),
+      apiFetch<SectorItem[]>("/api/sectors/latest?limit=10&leading_only=false", { token }),
+      apiFetch<AutoTradeStatus>("/api/auto-trade/status", { token }),
+    ]);
+    if (s.status === "fulfilled") setSupply(s.value);
+    if (n.status === "fulfilled") setNews(n.value);
+    if (sec.status === "fulfilled") setSectors(sec.value);
+    if (t.status === "fulfilled") setTrade(t.value);
+    setLoading(false);
   }, [token]);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 60_000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, [load]);
 
+  /* ── Not logged in ── */
   if (!token) {
     return (
-      <main style={styles.container}>
-        <h1 style={styles.title}>Trading Dashboard</h1>
-        <p style={styles.loginMsg}>\uB85C\uADF8\uC778\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.</p>
-      </main>
+      <div className="flex flex-col items-center justify-center py-24 text-gray-500">
+        <p className="text-lg">로그인이 필요합니다</p>
+        <p className="mt-2 text-sm text-gray-600">JWT 토큰을 localStorage에 설정하세요</p>
+      </div>
     );
   }
 
   return (
-    <main style={styles.container}>
-      <h1 style={styles.title}>Trading Dashboard</h1>
-
-      {/* ===== \uC0C1\uB2E8: \uC2DC\uC7A5 \uC9C0\uC218 + \uC218\uAE09 \uD604\uD669 ===== */}
-      <section style={styles.topBar}>
-        {["KOSPI", "KOSDAQ"].map((market) => {
-          const data = supplyTrend[market];
-          if (!data) {
-            return (
-              <div key={market} style={styles.indexCard}>
-                <strong>{market}</strong>
-                <span style={styles.noData}>\uB370\uC774\uD130 \uC5C6\uC74C</span>
-              </div>
-            );
-          }
-          const isUp = data.index_change_rate >= 0;
+    <div className="space-y-6">
+      {/* ── Top: Market Index + Supply ── */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {(["KOSPI", "KOSDAQ"] as const).map((mkt) => {
+          const d = supply[mkt];
           return (
-            <div key={market} style={styles.indexCard}>
-              <div style={styles.indexHeader}>
-                <strong>{market}</strong>
-                <span style={{ color: isUp ? "#e74c3c" : "#3498db", fontWeight: "bold" }}>
-                  {data.index_value.toFixed(2)} ({isUp ? "+" : ""}
-                  {data.index_change_rate.toFixed(2)}%)
-                </span>
+            <div key={mkt} className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-gray-400">{mkt}</span>
+                {d ? (
+                  <span className={`text-lg font-bold ${d.index_change_rate >= 0 ? "text-up" : "text-down"}`}>
+                    {d.index_value.toFixed(2)}
+                    <span className="ml-1 text-xs">
+                      ({d.index_change_rate >= 0 ? "+" : ""}{d.index_change_rate.toFixed(2)}%)
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-sm text-gray-600">―</span>
+                )}
               </div>
-              <div style={styles.supplyRow}>
-                <span>
-                  \uC678\uC778{" "}
-                  <span style={{ color: trendColor(data.foreign_trend) }}>
-                    {trendIcon(data.foreign_trend)}
-                  </span>{" "}
-                  {formatNumber(data.foreign_net_buy)}
-                </span>
-                <span>
-                  \uAE30\uAD00{" "}
-                  <span style={{ color: trendColor(data.institution_trend) }}>
-                    {trendIcon(data.institution_trend)}
-                  </span>{" "}
-                  {formatNumber(data.institution_net_buy)}
-                </span>
-                <span>\uAC1C\uC778 {formatNumber(data.individual_net_buy)}</span>
-              </div>
+              {d && (
+                <div className="mt-3 flex gap-4 text-xs text-gray-400">
+                  <span>
+                    외인 <span className={trendCls(d.foreign_trend)}>{trendArrow(d.foreign_trend)}</span>{" "}
+                    {fmtNum(d.foreign_net_buy)}
+                  </span>
+                  <span>
+                    기관 <span className={trendCls(d.institution_trend)}>{trendArrow(d.institution_trend)}</span>{" "}
+                    {fmtNum(d.institution_net_buy)}
+                  </span>
+                  <span>개인 {fmtNum(d.individual_net_buy)}</span>
+                </div>
+              )}
             </div>
           );
         })}
 
-        {autoTradeStatus && (
-          <div style={styles.indexCard}>
-            <strong>\uC790\uB3D9\uB9E4\uB9E4</strong>
-            <span style={{ color: autoTradeStatus.is_virtual ? "#27ae60" : "#e74c3c" }}>
-              {autoTradeStatus.is_virtual ? "\uBAA8\uC758" : "\uC2E4\uC804"}
-            </span>
-            <span>
-              \uC8FC\uBB38 {autoTradeStatus.daily_order_count}/{autoTradeStatus.max_daily_orders}
-            </span>
-          </div>
-        )}
-      </section>
-
-      {/* ===== \uBCF8\uBB38: \uC88C\uCE21 \uB274\uC2A4 / \uC6B0\uCE21 \uC139\uD130 ===== */}
-      <div style={styles.mainGrid}>
-        {/* \uC88C\uCE21: \uACE0\uC601\uD5A5 \uB274\uC2A4 */}
-        <section style={styles.panel}>
-          <h2 style={styles.panelTitle}>\uD575\uC2EC \uB274\uC2A4 (\uC601\uD5A5\uB3C4 8+)</h2>
-          {loading && highImpactNews.length === 0 ? (
-            <p style={styles.noData}>\uB85C\uB529 \uC911...</p>
-          ) : highImpactNews.length === 0 ? (
-            <p style={styles.noData}>\uACE0\uC601\uD5A5 \uB274\uC2A4 \uC5C6\uC74C</p>
+        {/* Auto‑trade status */}
+        <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
+          <span className="text-xs font-medium text-gray-400">자동매매</span>
+          {trade ? (
+            <div className="mt-1">
+              <span className={`text-sm font-bold ${trade.is_virtual ? "text-emerald-400" : "text-up"}`}>
+                {trade.is_virtual ? "모의투자" : "실전"}
+              </span>
+              <p className="mt-1 text-xs text-gray-500">
+                주문 {trade.daily_order_count}/{trade.max_daily_orders} &middot;{" "}
+                {fmtNum(trade.daily_order_amount)}/{fmtNum(trade.max_daily_amount)}원
+              </p>
+            </div>
           ) : (
-            <ul style={styles.newsList}>
-              {highImpactNews.map((n) => (
-                <li key={n.id} style={styles.newsItem}>
-                  <div style={styles.newsHeader}>
-                    <span style={styles.impactBadge}>{n.impact_score}</span>
-                    {n.theme && <span style={styles.themeBadge}>{n.theme}</span>}
-                    {n.is_leading && <span style={styles.leadingBadge}>\uC8FC\uB3C4</span>}
+            <p className="mt-1 text-sm text-gray-600">미연결</p>
+          )}
+        </div>
+      </div>
+
+      {/* ── Body: News + Sectors ── */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Left: High‑impact news */}
+        <section className="rounded-xl border border-gray-800 bg-gray-900/40 p-5">
+          <h2 className="mb-4 text-sm font-semibold text-gray-300">핵심 뉴스 (영향도 8+)</h2>
+          {loading && news.length === 0 ? (
+            <p className="text-xs text-gray-600">로딩 중…</p>
+          ) : news.length === 0 ? (
+            <p className="text-xs text-gray-600">고영향 뉴스 없음</p>
+          ) : (
+            <ul className="space-y-3">
+              {news.map((n) => (
+                <li key={n.id} className="border-b border-gray-800/60 pb-3 last:border-0">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-red-500/20 text-[10px] font-bold text-red-400">
+                      {n.impact_score}
+                    </span>
+                    {n.theme && (
+                      <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-400">
+                        {n.theme}
+                      </span>
+                    )}
+                    {n.is_leading && (
+                      <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-400">주도</span>
+                    )}
                   </div>
-                  <p style={styles.newsTitle}>{n.title}</p>
-                  <span style={styles.newsMeta}>
-                    {n.source} | {new Date(n.crawled_at).toLocaleString("ko-KR")}
+                  <p className="mt-1 text-sm leading-snug text-gray-200">{n.title}</p>
+                  <span className="text-[10px] text-gray-600">
+                    {n.source} · {new Date(n.crawled_at).toLocaleString("ko-KR")}
                   </span>
                 </li>
               ))}
@@ -223,46 +202,45 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* \uC6B0\uCE21: \uC139\uD130 \uB7AD\uD0B9 */}
-        <section style={styles.panel}>
-          <h2 style={styles.panelTitle}>\uC139\uD130 \uAC15\uC138 \uB7AD\uD0B9</h2>
+        {/* Right: Sector ranking */}
+        <section className="rounded-xl border border-gray-800 bg-gray-900/40 p-5">
+          <h2 className="mb-4 text-sm font-semibold text-gray-300">섹터 강세 랭킹</h2>
           {loading && sectors.length === 0 ? (
-            <p style={styles.noData}>\uB85C\uB529 \uC911...</p>
+            <p className="text-xs text-gray-600">로딩 중…</p>
           ) : sectors.length === 0 ? (
-            <p style={styles.noData}>\uC139\uD130 \uB370\uC774\uD130 \uC5C6\uC74C</p>
+            <p className="text-xs text-gray-600">섹터 데이터 없음</p>
           ) : (
-            <div>
+            <div className="space-y-2">
               {sectors.map((s, i) => (
                 <div
                   key={s.sector_name}
-                  style={{
-                    ...styles.sectorCard,
-                    borderLeft: s.is_leading
-                      ? "4px solid #e74c3c"
-                      : "4px solid #ddd",
-                  }}
+                  className={`rounded-lg border px-3 py-2 ${
+                    s.is_leading
+                      ? "border-red-500/30 bg-red-500/5"
+                      : "border-gray-800 bg-gray-900/30"
+                  }`}
                 >
-                  <div style={styles.sectorHeader}>
-                    <span style={styles.sectorRank}>#{i + 1}</span>
-                    <strong>{s.sector_name}</strong>
-                    {s.is_leading && <span style={styles.leadingBadge}>\uC8FC\uB3C4</span>}
-                    <span style={styles.sectorMarket}>{s.market}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">#{i + 1}</span>
+                    <span className="text-sm font-medium text-gray-200">{s.sector_name}</span>
+                    {s.is_leading && (
+                      <span className="rounded bg-red-500/20 px-1 py-0.5 text-[10px] text-red-400">주도</span>
+                    )}
+                    <span className="ml-auto text-[10px] text-gray-600">{s.market}</span>
                   </div>
-                  <div style={styles.sectorMetrics}>
+                  <div className="mt-1 flex items-center gap-4 text-xs text-gray-400">
                     <span>
-                      Top3 \uD3C9\uADE0{" "}
-                      <b style={{ color: s.top3_avg_change_rate >= 0 ? "#e74c3c" : "#3498db" }}>
+                      Top3{" "}
+                      <b className={s.top3_avg_change_rate >= 0 ? "text-up" : "text-down"}>
                         {s.top3_avg_change_rate >= 0 ? "+" : ""}
                         {s.top3_avg_change_rate.toFixed(2)}%
                       </b>
                     </span>
-                    <span>\uAC70\uB798\uB300\uAE08\uBE44 {s.sector_volume_ratio.toFixed(0)}%</span>
-                  </div>
-                  <div style={styles.leaderRow}>
-                    <span style={styles.leaderLabel}>\uB300\uC7A5\uC8FC</span>
-                    <span>
-                      {s.leader_name} ({s.leader_ticker}){" "}
-                      <b style={{ color: s.leader_change_rate >= 0 ? "#e74c3c" : "#3498db" }}>
+                    <span>거래대금비 {s.sector_volume_ratio.toFixed(0)}%</span>
+                    <span className="ml-auto">
+                      <span className="text-gray-600">대장</span>{" "}
+                      {s.leader_name}{" "}
+                      <b className={s.leader_change_rate >= 0 ? "text-up" : "text-down"}>
                         {s.leader_change_rate >= 0 ? "+" : ""}
                         {s.leader_change_rate.toFixed(2)}%
                       </b>
@@ -274,136 +252,6 @@ export default function DashboardPage() {
           )}
         </section>
       </div>
-    </main>
+    </div>
   );
 }
-
-// ================================================================
-// Inline Styles
-// ================================================================
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {},
-  title: {
-    fontSize: "1.3rem",
-    marginBottom: "1rem",
-    borderBottom: "2px solid #333",
-    paddingBottom: "0.5rem",
-  },
-  loginMsg: { color: "#999", textAlign: "center" as const, marginTop: "3rem" },
-
-  topBar: {
-    display: "flex",
-    gap: "1rem",
-    marginBottom: "1.5rem",
-    flexWrap: "wrap" as const,
-  },
-  indexCard: {
-    flex: 1,
-    minWidth: 220,
-    background: "#fff",
-    border: "1px solid #e0e0e0",
-    borderRadius: 8,
-    padding: "0.8rem 1rem",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: "0.3rem",
-  },
-  indexHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  supplyRow: {
-    display: "flex",
-    gap: "1rem",
-    fontSize: "0.85rem",
-    color: "#555",
-  },
-  noData: { color: "#999", fontSize: "0.85rem" },
-
-  mainGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "1.5rem",
-  },
-
-  panel: {
-    background: "#fff",
-    border: "1px solid #e0e0e0",
-    borderRadius: 8,
-    padding: "1rem",
-    maxHeight: 600,
-    overflowY: "auto" as const,
-  },
-  panelTitle: {
-    fontSize: "1.1rem",
-    marginBottom: "0.8rem",
-    paddingBottom: "0.4rem",
-    borderBottom: "1px solid #eee",
-  },
-
-  newsList: { listStyle: "none", padding: 0, margin: 0 },
-  newsItem: {
-    padding: "0.6rem 0",
-    borderBottom: "1px solid #f0f0f0",
-  },
-  newsHeader: { display: "flex", gap: "0.4rem", marginBottom: "0.3rem" },
-  impactBadge: {
-    background: "#e74c3c",
-    color: "#fff",
-    borderRadius: 4,
-    padding: "1px 6px",
-    fontSize: "0.75rem",
-    fontWeight: "bold",
-  },
-  themeBadge: {
-    background: "#3498db",
-    color: "#fff",
-    borderRadius: 4,
-    padding: "1px 6px",
-    fontSize: "0.75rem",
-  },
-  leadingBadge: {
-    background: "#e67e22",
-    color: "#fff",
-    borderRadius: 4,
-    padding: "1px 6px",
-    fontSize: "0.75rem",
-  },
-  newsTitle: { margin: "0.2rem 0", fontSize: "0.9rem" },
-  newsMeta: { fontSize: "0.75rem", color: "#999" },
-
-  sectorCard: {
-    padding: "0.6rem 0.8rem",
-    marginBottom: "0.5rem",
-    background: "#fafafa",
-    borderRadius: 4,
-  },
-  sectorHeader: {
-    display: "flex",
-    gap: "0.5rem",
-    alignItems: "center",
-    marginBottom: "0.3rem",
-  },
-  sectorRank: { color: "#999", fontSize: "0.85rem" },
-  sectorMarket: { color: "#aaa", fontSize: "0.75rem", marginLeft: "auto" },
-  sectorMetrics: {
-    display: "flex",
-    gap: "1rem",
-    fontSize: "0.85rem",
-    color: "#555",
-  },
-  leaderRow: {
-    fontSize: "0.8rem",
-    color: "#666",
-    marginTop: "0.2rem",
-  },
-  leaderLabel: {
-    background: "#eee",
-    borderRadius: 3,
-    padding: "0 4px",
-    marginRight: "0.3rem",
-    fontSize: "0.75rem",
-  },
-};
