@@ -5,7 +5,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app/ ./app/
+# 로컬과 동일한 모듈 구조 유지: backend.app.xxx import가 동작하도록
+# backend/ 패키지 __init__.py 생성 + backend/app/ 복사
+RUN mkdir -p backend && touch backend/__init__.py
+COPY app/ ./backend/app/
 
 # 워커 코드는 프로젝트 루트의 workers/ 디렉토리에서 복사
 COPY --from=workers . ./workers/
