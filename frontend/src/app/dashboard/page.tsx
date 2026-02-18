@@ -283,15 +283,9 @@ export default function DashboardPage() {
 // ================================================================
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    padding: "1.5rem",
-    fontFamily: "'Pretendard', -apple-system, monospace",
-    maxWidth: 1200,
-    margin: "0 auto",
-    color: "#1a1a1a",
-  },
+  container: {},
   title: {
-    fontSize: "1.5rem",
+    fontSize: "1.3rem",
     marginBottom: "1rem",
     borderBottom: "2px solid #333",
     paddingBottom: "0.5rem",
@@ -307,7 +301,8 @@ const styles: Record<string, React.CSSProperties> = {
   indexCard: {
     flex: 1,
     minWidth: 220,
-    background: "#f8f9fa",
+    background: "#fff",
+    border: "1px solid #e0e0e0",
     borderRadius: 8,
     padding: "0.8rem 1rem",
     display: "flex",
