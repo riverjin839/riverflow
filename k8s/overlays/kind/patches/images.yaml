@@ -1,6 +1,8 @@
 # Kind 환경: 레지스트리 prefix 없이 로컬 이미지 사용
 # kind load docker-image 로 클러스터에 직접 로드하므로
 # imagePullPolicy: Never 설정 필요
+
+# ===== Deployments =====
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,3 +41,79 @@ spec:
         - name: feed
           image: trading-system/worker:latest
           imagePullPolicy: Never
+---
+# ===== CronJobs (워커) =====
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: condition-scanner
+  namespace: trading-system
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: scanner
+              image: trading-system/worker:latest
+              imagePullPolicy: Never
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-review
+  namespace: trading-system
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: review
+              image: trading-system/worker:latest
+              imagePullPolicy: Never
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: morning-briefing
+  namespace: trading-system
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: briefing
+              image: trading-system/worker:latest
+              imagePullPolicy: Never
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-crawler
+  namespace: trading-system
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: crawler
+              image: trading-system/worker:latest
+              imagePullPolicy: Never
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: stop-loss-checker
+  namespace: trading-system
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: checker
+              image: trading-system/worker:latest
+              imagePullPolicy: Never

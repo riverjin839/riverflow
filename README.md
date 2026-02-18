@@ -118,6 +118,106 @@ open http://trading.local
 | macOS 호환성 | Docker Desktop 필요 | Docker Desktop 필요 |
 | 장점 | 프로덕션 K3s와 동일 환경 | 설정 단순, CNCF 공식 도구 |
 
+## 접속 설정 (로컬 + 외부)
+
+### 로컬 접속 (같은 머신)
+
+K8s Ingress를 통해 `trading.local` 도메인으로 접속한다.
+
+```bash
+# /etc/hosts 에 추가
+echo "127.0.0.1 trading.local" | sudo tee -a /etc/hosts
+
+# 접속 확인
+curl http://trading.local/api/health
+open http://trading.local               # 프론트엔드
+open http://trading.local/api/docs      # Swagger UI
+```
+
+### 외부 접속 (같은 네트워크 내 다른 기기)
+
+같은 LAN에 있는 다른 PC/모바일에서 맥미니(또는 서버)의 트레이딩 시스템에 접속하려면 아래 설정이 필요하다.
+
+#### 1단계: 서버 머신의 LAN IP 확인
+
+```bash
+# macOS
+ipconfig getifaddr en0      # Wi-Fi
+ipconfig getifaddr en1      # Ethernet
+
+# Linux
+hostname -I | awk '{print $1}'
+```
+
+예시: `192.168.0.100`
+
+#### 2단계: Kind/k3d 포트 포워딩
+
+**Kind 환경**에서는 Ingress Controller가 호스트 80/443 포트에 바인딩되어 있으므로 추가 설정 없이 접속 가능하다.
+만약 80 포트가 사용 중이라면 `kubectl port-forward`를 사용한다:
+
+```bash
+# Kind: NGINX Ingress가 이미 hostPort 80/443을 사용 (setup-kind.sh에서 설정)
+# → 추가 포트 포워딩 불필요
+
+# k3d: Traefik이 기본적으로 호스트 80:80으로 매핑됨
+# → 추가 포트 포워딩 불필요
+
+# 포트가 사용중이거나 직접 포워딩이 필요한 경우:
+kubectl port-forward -n trading-system svc/backend 8000:8000 --address=0.0.0.0 &
+kubectl port-forward -n trading-system svc/frontend 3000:3000 --address=0.0.0.0 &
+```
+
+#### 3단계: 접속 기기에서 hosts 설정
+
+접속하려는 기기(PC/Mac)의 `/etc/hosts`에 서버 IP를 등록한다:
+
+```bash
+# 접속하는 기기에서 실행 (서버 IP에 맞게 수정)
+echo "192.168.0.100 trading.local" | sudo tee -a /etc/hosts
+```
+
+**모바일(iOS/Android)**: hosts 파일 수정이 어려우므로 IP로 직접 접속하거나 아래 방법 사용.
+
+#### 4단계: IP 직접 접속 (hosts 수정 없이)
+
+Ingress는 Host 헤더 기반으로 라우팅하므로, IP로 직접 접속하려면 curl에 Host 헤더를 추가하거나 `kubectl port-forward`를 사용한다:
+
+```bash
+# 방법 A: Host 헤더 지정
+curl -H "Host: trading.local" http://192.168.0.100/api/health
+
+# 방법 B: port-forward (Ingress 우회, 서비스에 직접 접속)
+# 서버 머신에서 실행 (--address=0.0.0.0 으로 외부 접근 허용)
+kubectl port-forward -n trading-system svc/backend 8000:8000 --address=0.0.0.0 &
+kubectl port-forward -n trading-system svc/frontend 3000:3000 --address=0.0.0.0 &
+
+# 다른 기기에서 접속
+open http://192.168.0.100:3000    # 프론트엔드
+open http://192.168.0.100:8000/api/docs  # API 문서
+```
+
+#### 5단계 (선택): macOS 방화벽 허용
+
+macOS 방화벽이 활성화되어 있으면 외부 접속이 차단될 수 있다:
+
+```bash
+# 방화벽 상태 확인
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+
+# 필요 시 Docker 허용 (시스템 설정 > 개인정보 보호 및 보안 > 방화벽에서 설정)
+```
+
+### 접속 요약
+
+| 접속 위치 | URL | 비고 |
+|-----------|-----|------|
+| 로컬 (같은 머신) | `http://trading.local` | /etc/hosts 설정 필요 |
+| 로컬 API 문서 | `http://trading.local/api/docs` | Swagger UI |
+| 외부 (hosts 등록) | `http://trading.local` | 접속 기기 hosts에 서버IP 등록 |
+| 외부 (port-forward) | `http://<서버IP>:3000` | `--address=0.0.0.0` 필요 |
+| 외부 API (port-forward) | `http://<서버IP>:8000/api/docs` | `--address=0.0.0.0` 필요 |
+
 ## 시크릿 설정
 
 K8s 배포 전에 시크릿을 생성해야 한다.
@@ -222,6 +322,11 @@ riverflow/
 | `GET` | `/api/auto-trade/status` | 자동매매 상태 |
 | `GET/POST/PUT/DELETE` | `/api/conditions` | 조건식 CRUD |
 | `POST` | `/api/conditions/{id}/scan` | 조건 검색 실행 |
+| `POST` | `/api/sectors/analyze` | 섹터 강세 분석 실행 |
+| `GET` | `/api/sectors/latest` | 최근 섹터 분석 결과 |
+| `POST` | `/api/alerts/overheat` | 단기 과열 종목 감지 |
+| `GET` | `/api/supply/latest` | 최근 수급 스냅샷 |
+| `GET` | `/api/supply/trend` | KOSPI/KOSDAQ 수급 추세 요약 |
 
 ## 자동매매 안전장치
 
@@ -249,6 +354,8 @@ PostgreSQL + pgvector. 초기화 스크립트: `k8s/base/postgres/init-scripts/0
 | `search_conditions` | 사용자 정의 조건식 |
 | `search_results` | 조건 검색 결과 |
 | `auto_trade_orders` | 자동매매 주문 이력 |
+| `sector_analysis` | 섹터 강세 분석 결과 (주도섹터/대장주) |
+| `supply_snapshots` | 투자자별 수급 스냅샷 (외인/기관/개인) |
 
 > Alembic 미사용. 스키마 변경 시 `01-schema.sql` 수정 후 DB 재생성.
 
