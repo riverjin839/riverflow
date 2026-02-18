@@ -96,14 +96,17 @@ make setup-kind
 # 2. 시크릿 생성
 kubectl apply -f k8s/base/secrets/kis-credentials.yaml
 
-# 3. 빌드 + 배포
+# 3. HTTPS 인증서 생성 (선택, 권장)
+./scripts/gen-tls-cert.sh
+
+# 4. 빌드 + 배포
 make deploy-kind
 
-# 4. /etc/hosts 추가
+# 5. /etc/hosts 추가
 echo "127.0.0.1 trading.local" | sudo tee -a /etc/hosts
 
-# 5. 접속
-open http://trading.local
+# 6. 접속
+open https://trading.local
 ```
 
 ### k3d vs Kind 비교
@@ -212,11 +215,75 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
 
 | 접속 위치 | URL | 비고 |
 |-----------|-----|------|
-| 로컬 (같은 머신) | `http://trading.local` | /etc/hosts 설정 필요 |
-| 로컬 API 문서 | `http://trading.local/api/docs` | Swagger UI |
-| 외부 (hosts 등록) | `http://trading.local` | 접속 기기 hosts에 서버IP 등록 |
+| 로컬 HTTPS (Kind) | `https://trading.local` | TLS 인증서 설정 시 |
+| 로컬 HTTP | `http://trading.local` | /etc/hosts 설정 필요 |
+| 로컬 API 문서 | `https://trading.local/api/docs` | Swagger UI |
+| 외부 (hosts 등록) | `https://trading.local` | 접속 기기 hosts에 서버IP 등록 |
 | 외부 (port-forward) | `http://<서버IP>:3000` | `--address=0.0.0.0` 필요 |
 | 외부 API (port-forward) | `http://<서버IP>:8000/api/docs` | `--address=0.0.0.0` 필요 |
+
+## HTTPS 설정 (Kind 환경)
+
+Kind 환경에서 self-signed TLS 인증서로 HTTPS를 활성화할 수 있다.
+
+### 빠른 설정
+
+```bash
+# 인증서 생성 + K8s TLS Secret 등록 (한 줄로 완료)
+./scripts/gen-tls-cert.sh
+
+# Ingress 재적용 (TLS 설정 반영)
+kubectl apply -k k8s/overlays/kind
+```
+
+이후 `https://trading.local` 로 접속한다. HTTP 요청은 자동으로 HTTPS로 리다이렉트된다.
+
+### 브라우저 인증서 경고 해결
+
+Self-signed 인증서이므로 브라우저에서 보안 경고가 뜬다. 아래 방법으로 신뢰 등록하면 경고가 사라진다.
+
+**macOS:**
+```bash
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain /tmp/riverflow-tls/tls.crt
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo cp /tmp/riverflow-tls/tls.crt /usr/local/share/ca-certificates/trading-local.crt
+sudo update-ca-certificates
+```
+
+**Chrome/Edge:** `chrome://flags/#allow-insecure-localhost` 를 Enabled 로 설정하면 `localhost`/로컬 도메인의 self-signed 인증서 경고를 무시할 수 있다.
+
+### 커스텀 도메인
+
+기본 도메인은 `trading.local`이다. 변경하려면:
+
+```bash
+# 1. 다른 도메인으로 인증서 생성
+./scripts/gen-tls-cert.sh my-trading.local
+
+# 2. Ingress의 host 값 수정
+#    k8s/overlays/kind/patches/ingress-nginx.yaml 에서 trading.local → my-trading.local
+
+# 3. /etc/hosts 업데이트
+echo "127.0.0.1 my-trading.local" | sudo tee -a /etc/hosts
+```
+
+### 구조
+
+```
+Client (브라우저)
+  │ HTTPS (port 443)
+  ▼
+NGINX Ingress Controller ──── TLS 종료 (tls-secret)
+  │ HTTP
+  ├──→ /api/*  → backend:8000
+  └──→ /*      → frontend:3000
+```
+
+> **k3d 환경**: k3d는 Traefik을 사용하며, TLS 설정 방식이 다르다. k3d에서 HTTPS가 필요하면 Traefik의 `IngressRoute` CRD + `TLSStore`를 사용해야 한다.
 
 ## 시크릿 설정
 
@@ -282,7 +349,7 @@ riverflow/
 │   ├── Dockerfile              # API 서버 이미지
 │   └── Dockerfile.worker       # 워커 이미지
 ├── frontend/                   # Next.js 프론트엔드
-│   ├── src/app/                # 페이지 (/, /dashboard, /journal)
+│   ├── src/app/                # 페이지 (/login, /dashboard, /market, /journal)
 │   └── Dockerfile
 ├── workers/                    # K8s CronJob/Deployment 워커
 │   ├── condition_scanner.py    # 조건검색 스캔 (장중 5분마다)
@@ -301,6 +368,7 @@ riverflow/
 │   ├── setup-k3d.sh            # k3d 클러스터 생성
 │   ├── setup-kind.sh           # Kind 클러스터 생성
 │   ├── deploy.sh               # 빌드 + 배포 (k3d/kind 자동 분기)
+│   ├── gen-tls-cert.sh         # HTTPS TLS 인증서 생성
 │   └── backup-db.sh            # PostgreSQL 백업
 └── Makefile                    # 개발 명령어 모음
 ```

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/use-auth";
 
 interface JournalEntry {
   id: number;
@@ -17,13 +18,9 @@ interface JournalEntry {
 }
 
 export default function JournalPage() {
-  const [token, setToken] = useState<string | null>(null);
+  const { token, checked } = useAuth();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setToken(typeof window !== "undefined" ? localStorage.getItem("token") : null);
-  }, []);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -40,13 +37,7 @@ export default function JournalPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  if (!token) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-gray-500">
-        <p className="text-lg">로그인이 필요합니다</p>
-      </div>
-    );
-  }
+  if (!checked || !token) return null;
 
   return (
     <div className="space-y-4">

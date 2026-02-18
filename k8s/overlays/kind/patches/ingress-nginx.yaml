@@ -1,16 +1,21 @@
 # Kind 환경: Traefik -> NGINX Ingress Controller 전환
 # Kind는 내장 ingress가 없어 nginx-ingress를 별도 설치한다.
 # setup-kind.sh에서 자동으로 설치됨.
+# TLS: scripts/gen-tls-cert.sh로 생성한 self-signed cert 사용
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: backend-ingress
   namespace: trading-system
   annotations:
-    # Traefik 어노테이션 제거, nginx용으로 교체
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - trading.local
+      secretName: tls-secret
   rules:
     - host: trading.local
       http:
@@ -30,8 +35,13 @@ metadata:
   namespace: trading-system
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - trading.local
+      secretName: tls-secret
   rules:
     - host: trading.local
       http:
