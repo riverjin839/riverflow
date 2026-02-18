@@ -73,4 +73,14 @@ kubectl -n trading-system rollout status deployment/backend --timeout=120s
 kubectl -n trading-system rollout status deployment/postgres --timeout=120s
 
 echo ""
-echo "=== 완료. http://trading.local 에서 확인하세요 ==="
+if [ "$OVERLAY" = "kind" ]; then
+    # TLS Secret 존재 여부 확인
+    if kubectl get secret tls-secret -n trading-system &>/dev/null; then
+        echo "=== 완료. https://trading.local 에서 확인하세요 ==="
+    else
+        echo "=== 완료. http://trading.local 에서 확인하세요 ==="
+        echo "    HTTPS 활성화: ./scripts/gen-tls-cert.sh && kubectl apply -k k8s/overlays/kind"
+    fi
+else
+    echo "=== 완료. http://trading.local 에서 확인하세요 ==="
+fi

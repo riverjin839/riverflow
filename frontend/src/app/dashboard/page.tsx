@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/use-auth";
 
 /* ── Types ── */
 interface SupplyTrend {
@@ -66,16 +67,12 @@ function fmtNum(n: number) {
 
 /* ── Component ── */
 export default function DashboardPage() {
-  const [token, setToken] = useState<string | null>(null);
+  const { token, checked } = useAuth();
   const [supply, setSupply] = useState<Record<string, SupplyTrend | null>>({});
   const [news, setNews] = useState<NewsItem[]>([]);
   const [sectors, setSectors] = useState<SectorItem[]>([]);
   const [trade, setTrade] = useState<AutoTradeStatus | null>(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setToken(typeof window !== "undefined" ? localStorage.getItem("token") : null);
-  }, []);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -99,15 +96,7 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, [load]);
 
-  /* ── Not logged in ── */
-  if (!token) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-gray-500">
-        <p className="text-lg">로그인이 필요합니다</p>
-        <p className="mt-2 text-sm text-gray-600">JWT 토큰을 localStorage에 설정하세요</p>
-      </div>
-    );
-  }
+  if (!checked || !token) return null;
 
   return (
     <div className="space-y-6">

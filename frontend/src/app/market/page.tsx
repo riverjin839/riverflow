@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/use-auth";
 
 /* ── Types ── */
 interface IndexData {
@@ -23,13 +24,9 @@ interface MarketOverview {
 
 /* ── Component ── */
 export default function MarketPage() {
-  const [token, setToken] = useState<string | null>(null);
+  const { token, checked } = useAuth();
   const [data, setData] = useState<MarketOverview | null>(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setToken(typeof window !== "undefined" ? localStorage.getItem("token") : null);
-  }, []);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -50,13 +47,7 @@ export default function MarketPage() {
     return () => clearInterval(id);
   }, [load]);
 
-  if (!token) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-gray-500">
-        <p className="text-lg">로그인이 필요합니다</p>
-      </div>
-    );
-  }
+  if (!checked || !token) return null;
 
   return (
     <div className="space-y-8">
