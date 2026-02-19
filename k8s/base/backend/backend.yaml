@@ -26,6 +26,9 @@ spec:
                 name: kis-credentials
             - secretRef:
                 name: trading-db-creds
+            - secretRef:
+                name: trading-app-secrets
+                optional: true
             - configMapRef:
                 name: trading-config
           resources:
