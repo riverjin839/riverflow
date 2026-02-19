@@ -73,6 +73,14 @@ export default function DashboardPage() {
   const [sectors, setSectors] = useState<SectorItem[]>([]);
   const [trade, setTrade] = useState<AutoTradeStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshSec, setRefreshSec] = useState(60);
+
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem("settings");
+      if (s) { const p = JSON.parse(s); if (typeof p.refreshInterval === "number") setRefreshSec(p.refreshInterval); }
+    } catch { /* ignore */ }
+  }, []);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -92,9 +100,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 60_000);
+    if (refreshSec <= 0) return;
+    const id = setInterval(load, refreshSec * 1000);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, refreshSec]);
 
   if (!checked || !token) return null;
 

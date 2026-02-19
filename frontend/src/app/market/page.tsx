@@ -45,8 +45,13 @@ export default function MarketPage() {
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState("");
 
-  // localStorage에서 커스텀 종목 로드
+  // localStorage에서 설정/커스텀 종목 로드
+  const [refreshSec, setRefreshSec] = useState(30);
   useEffect(() => {
+    try {
+      const s = localStorage.getItem("settings");
+      if (s) { const p = JSON.parse(s); if (typeof p.refreshInterval === "number") setRefreshSec(p.refreshInterval); }
+    } catch { /* ignore */ }
     const saved = localStorage.getItem("market_custom_codes");
     if (saved) setCustomCodes(JSON.parse(saved));
   }, []);
@@ -84,7 +89,12 @@ export default function MarketPage() {
     setCustomCards(cards);
   }, [token, customCodes]);
 
-  useEffect(() => { load(); const id = setInterval(() => load(), 30_000); return () => clearInterval(id); }, [load]);
+  useEffect(() => {
+    load();
+    if (refreshSec <= 0) return;
+    const id = setInterval(() => load(), refreshSec * 1000);
+    return () => clearInterval(id);
+  }, [load, refreshSec]);
   useEffect(() => { loadCustom(); }, [loadCustom]);
 
   const addCustom = async () => {
