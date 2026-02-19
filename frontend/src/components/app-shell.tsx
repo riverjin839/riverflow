@@ -33,7 +33,7 @@ const NAV_ITEMS = [
   },
 ];
 
-export function NavBar() {
+export function AppShell({ children }: { children: React.ReactNode }) {
   const [loggedIn, setLoggedIn] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
@@ -50,8 +50,15 @@ export function NavBar() {
     router.push("/login");
   };
 
-  // 로그인 페이지에서는 사이드바 숨김
-  if (pathname === "/login" || !loggedIn) return null;
+  const isLogin = pathname === "/login";
+  const showSidebar = loggedIn && !isLogin;
+
+  // 로그인 페이지 또는 미인증 → 사이드바 없이 풀 레이아웃
+  if (!showSidebar) {
+    return (
+      <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+    );
+  }
 
   return (
     <>
@@ -59,7 +66,7 @@ export function NavBar() {
       <button
         onClick={() => setMobileOpen(!mobileOpen)}
         className="fixed left-3 top-3 z-[60] rounded-lg border border-gray-700 bg-gray-900 p-2 text-gray-400 lg:hidden"
-        aria-label="메뉴 열기"
+        aria-label="메뉴"
       >
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           {mobileOpen ? (
@@ -84,14 +91,12 @@ export function NavBar() {
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {/* 로고 */}
         <div className="flex h-14 items-center px-5 border-b border-gray-800/50">
           <a href="/dashboard" className="text-lg font-bold tracking-tight text-blue-400 hover:text-blue-300 transition-colors">
             Riverflow
           </a>
         </div>
 
-        {/* 네비게이션 */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="space-y-1">
             {NAV_ITEMS.map((item) => {
@@ -117,7 +122,6 @@ export function NavBar() {
           </ul>
         </nav>
 
-        {/* 하단: 로그아웃 */}
         <div className="border-t border-gray-800/50 px-3 py-3">
           <button
             onClick={logout}
@@ -130,6 +134,11 @@ export function NavBar() {
           </button>
         </div>
       </aside>
+
+      {/* 메인 콘텐츠 - 사이드바 너비만큼 마진 */}
+      <main className="px-4 py-6 lg:ml-52">
+        <div className="mx-auto max-w-7xl">{children}</div>
+      </main>
     </>
   );
 }

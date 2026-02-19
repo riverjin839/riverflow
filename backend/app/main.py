@@ -26,10 +26,15 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
-# CORS (로컬 개발용)
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://trading.local"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://trading.local",
+        "https://trading.local",
+        "http://trading.local:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -37,6 +37,7 @@ export default function MarketPage() {
   const [data, setData] = useState<MarketOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
   const [chartTarget, setChartTarget] = useState<IndexData | null>(null);
   const [customCodes, setCustomCodes] = useState<string[]>([]);
   const [customCards, setCustomCards] = useState<IndexData[]>([]);
@@ -55,10 +56,14 @@ export default function MarketPage() {
       if (!token) return;
       if (manual) setRefreshing(true);
       else setLoading(true);
+      setError("");
       try {
         const d = await apiFetch<MarketOverview>("/api/market/overview", { token });
         setData(d);
-      } catch { /* ignore */ } finally {
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+      } finally {
         setLoading(false);
         setRefreshing(false);
       }
@@ -129,7 +134,13 @@ export default function MarketPage() {
           데이터 로딩 중...
         </div>
       ) : !data ? (
-        <p className="text-sm text-gray-600">시황 데이터를 불러올 수 없습니다</p>
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600">시황 데이터를 불러올 수 없습니다</p>
+          {error && <p className="text-xs text-red-400">오류: {error}</p>}
+          <button onClick={() => load(true)} className="rounded bg-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700">
+            다시 시도
+          </button>
+        </div>
       ) : (
         <>
           <Section title="국내 지수" items={data.domestic} token={token} onChart={setChartTarget} />
