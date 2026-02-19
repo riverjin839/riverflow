@@ -21,17 +21,25 @@ fi
 
 echo "=== Docker 이미지 빌드 (target: $OVERLAY) ==="
 
+# 빌드 함수: 실패 시 캐시 정리 후 1회 재시도
+build_image() {
+    local name="$1"; shift
+    echo ">>> $name 빌드"
+    if ! docker build "$@" 2>&1; then
+        echo "!!! $name 빌드 실패 — 캐시 정리 후 재시도"
+        docker builder prune -f 2>/dev/null || true
+        docker build "$@"
+    fi
+}
+
 # Backend
-echo ">>> Backend 빌드"
-docker build -t "$TAG/backend:latest" ./backend
+build_image "Backend" -t "$TAG/backend:latest" ./backend
 
 # Frontend
-echo ">>> Frontend 빌드"
-docker build -t "$TAG/frontend:latest" ./frontend
+build_image "Frontend" -t "$TAG/frontend:latest" ./frontend
 
 # Worker (backend + workers 통합)
-echo ">>> Worker 빌드"
-docker build \
+build_image "Worker" \
     -t "$TAG/worker:latest" \
     -f backend/Dockerfile.worker \
     --build-context workers=./workers \
