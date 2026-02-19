@@ -1,166 +1,236 @@
-"""시황 개요 라우터 - 국내/해외 주요 지수 조회."""
+"""시황 개요 - Yahoo Finance 기반 국내/해외 지수 + RSI 조회.
 
+KIS API는 인증 토큰이 필요하고 모의투자 환경에서 지수 조회가 불안정하므로,
+Yahoo Finance를 primary 소스로 사용한다.
+"""
+
+import asyncio
 import logging
 from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
-from ..core.broker_config import broker_settings
 from ..core.security import verify_token
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 logger = logging.getLogger(__name__)
 
-# KIS API 업종 코드 매핑
-DOMESTIC_INDICES = [
-    {"name": "코스피", "code": "0001", "market": "U"},
-    {"name": "코스닥", "code": "1001", "market": "U"},
-    {"name": "코스피200", "code": "0028", "market": "U"},
-    {"name": "KRX300", "code": "0347", "market": "U"},
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+# Yahoo Finance 심볼 매핑
+INDICES = [
+    # 국내
+    {"name": "코스피", "symbol": "^KS11", "group": "domestic"},
+    {"name": "코스닥", "symbol": "^KQ11", "group": "domestic"},
+    {"name": "코스피200", "symbol": "^KS200", "group": "domestic"},
+    # 해외
+    {"name": "나스닥 종합", "symbol": "^IXIC", "group": "global"},
+    {"name": "나스닥100 선물", "symbol": "NQ=F", "group": "global"},
+    {"name": "S&P 500", "symbol": "^GSPC", "group": "global"},
+    {"name": "다우존스", "symbol": "^DJI", "group": "global"},
+    {"name": "필라델피아 반도체", "symbol": "^SOX", "group": "global"},
 ]
 
-# KIS 해외 지수 코드 (해외지수시세 API)
-GLOBAL_INDICES = [
-    {"name": "나스닥 종합", "code": "COMP", "exchange": "NAS"},
-    {"name": "나스닥100 선물", "code": "NQ=F", "exchange": "NAS"},
-    {"name": "S&P 500", "code": "SPX", "exchange": "NYS"},
-    {"name": "다우존스", "code": "DJI", "exchange": "NYS"},
-    {"name": "필라델피아 반도체", "code": "SOX", "exchange": "NYS"},
-]
+# 코스닥150 야간선물은 Yahoo에 없으므로 별도 처리
+KOSDAQ_NIGHT_FUTURES = {"name": "코스닥150 야간선물", "code": "KQ150NF"}
 
 
-async def _fetch_domestic_index(client: httpx.AsyncClient, headers: dict, idx: dict) -> dict | None:
-    """KIS 국내 업종 현재가 조회"""
-    try:
-        resp = await client.get(
-            f"{_base_url()}/uapi/domestic-stock/v1/quotations/inquire-index-price",
-            headers={**headers, "tr_id": "FHPUP02110000"},
-            params={"FID_COND_MRKT_DIV_CODE": idx["market"], "FID_INPUT_ISCD": idx["code"]},
-        )
-        resp.raise_for_status()
-        o = resp.json().get("output", {})
-        return {
-            "name": idx["name"],
-            "code": idx["code"],
-            "value": float(o.get("bstp_nmix_prpr", 0)),
-            "change": float(o.get("bstp_nmix_prdy_vrss", 0)),
-            "change_rate": float(o.get("bstp_nmix_prdy_ctrt", 0)),
-            "high": float(o.get("bstp_nmix_hgpr", 0)),
-            "low": float(o.get("bstp_nmix_lwpr", 0)),
-            "volume": int(float(o.get("acml_vol", 0))),
-        }
-    except Exception:
-        logger.debug("국내 지수 조회 실패: %s", idx["name"])
+def _calc_rsi(closes: list[float], period: int = 14) -> float | None:
+    """RSI 계산 (Wilder's smoothing method)."""
+    if len(closes) < period + 1:
         return None
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    # 초기 평균
+    avg_gain = sum(max(d, 0) for d in deltas[:period]) / period
+    avg_loss = sum(abs(min(d, 0)) for d in deltas[:period]) / period
+    # Wilder smoothing
+    for d in deltas[period:]:
+        avg_gain = (avg_gain * (period - 1) + max(d, 0)) / period
+        avg_loss = (avg_loss * (period - 1) + abs(min(d, 0))) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return round(100 - 100 / (1 + rs), 1)
 
 
-async def _fetch_global_index(client: httpx.AsyncClient, headers: dict, idx: dict) -> dict | None:
-    """KIS 해외 지수 현재가 조회"""
-    try:
-        resp = await client.get(
-            f"{_base_url()}/uapi/overseas-price/v1/quotations/inquire-daily-chartprice",
-            headers={**headers, "tr_id": "FHKST03030100"},
-            params={
-                "FID_COND_MRKT_DIV_CODE": "N",
-                "FID_INPUT_ISCD": idx["code"],
-                "FID_INPUT_DATE_1": datetime.now().strftime("%Y%m%d"),
-                "FID_INPUT_DATE_2": datetime.now().strftime("%Y%m%d"),
-                "FID_PERIOD_DIV_CODE": "D",
-            },
-        )
-        resp.raise_for_status()
-        output = resp.json().get("output2", [])
-        if not output:
-            # 대안: 간단히 해외주식 현재가 시세 API 시도
-            return _fallback_global(idx)
-        latest = output[0]
-        value = float(latest.get("ovrs_nmix_prpr", 0))
-        prev = float(latest.get("ovrs_nmix_prdy_clpr", value))
-        change = value - prev
-        rate = (change / prev * 100) if prev else 0
-        return {
-            "name": idx["name"],
-            "code": idx["code"],
-            "value": value,
-            "change": round(change, 2),
-            "change_rate": round(rate, 2),
-            "high": float(latest.get("ovrs_nmix_hgpr", 0)),
-            "low": float(latest.get("ovrs_nmix_lwpr", 0)),
-            "volume": 0,
-        }
-    except Exception:
-        logger.debug("해외 지수 조회 실패: %s", idx["name"])
-        return _fallback_global(idx)
-
-
-def _fallback_global(idx: dict) -> dict:
-    """API 실패 시 빈 데이터 반환"""
+def _empty(name: str = "", code: str = "") -> dict:
     return {
-        "name": idx["name"],
-        "code": idx["code"],
+        "name": name,
+        "code": code,
         "value": 0,
         "change": 0,
         "change_rate": 0,
         "high": 0,
         "low": 0,
         "volume": 0,
+        "rsi": None,
     }
 
 
-def _base_url() -> str:
-    if broker_settings.KIS_IS_VIRTUAL:
-        return "https://openapivts.koreainvestment.com:29443"
-    return "https://openapi.koreainvestment.com:9443"
+async def _fetch_yahoo(client: httpx.AsyncClient, idx: dict) -> dict:
+    """Yahoo Finance v8 chart API로 지수 데이터 + RSI 계산."""
+    symbol = idx["symbol"]
+    try:
+        resp = await client.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            params={"interval": "1d", "range": "1mo"},
+            headers={"User-Agent": _UA},
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+        results = body.get("chart", {}).get("result")
+        if not results:
+            logger.warning("Yahoo 빈 결과: %s", symbol)
+            return _empty(idx["name"], symbol)
+
+        meta = results[0].get("meta", {})
+        quotes = results[0].get("indicators", {}).get("quote", [{}])[0]
+
+        # 종가 리스트 (RSI 계산용)
+        closes_raw = quotes.get("close", [])
+        closes = [c for c in closes_raw if c is not None]
+
+        price = meta.get("regularMarketPrice", 0)
+        prev = meta.get("previousClose") or meta.get("chartPreviousClose") or price
+        change = round(price - prev, 2) if prev else 0
+        rate = round(change / prev * 100, 2) if prev else 0
+
+        highs = quotes.get("high", [])
+        lows = quotes.get("low", [])
+        vols = quotes.get("volume", [])
+
+        # 마지막 유효값 추출
+        today_high = next((h for h in reversed(highs) if h is not None), price)
+        today_low = next((l for l in reversed(lows) if l is not None), price)
+        today_vol = next((v for v in reversed(vols) if v is not None), 0)
+
+        return {
+            "name": idx["name"],
+            "code": symbol,
+            "value": round(price, 2),
+            "change": change,
+            "change_rate": rate,
+            "high": round(today_high, 2),
+            "low": round(today_low, 2),
+            "volume": int(today_vol),
+            "rsi": _calc_rsi(closes),
+        }
+    except Exception as e:
+        logger.warning("Yahoo 조회 실패 (%s): %s", symbol, e)
+        return _empty(idx["name"], symbol)
 
 
-async def _get_token(client: httpx.AsyncClient) -> str:
-    """KIS OAuth 토큰 발급"""
-    resp = await client.post(
-        f"{_base_url()}/oauth2/tokenP",
-        json={
-            "grant_type": "client_credentials",
-            "appkey": broker_settings.KIS_APP_KEY,
-            "appsecret": broker_settings.KIS_APP_SECRET,
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
+async def _fetch_naver_kosdaq_futures(client: httpx.AsyncClient) -> dict:
+    """코스닥150 선물 시세 조회 (Naver Finance 다중 소스 시도)."""
+    name = KOSDAQ_NIGHT_FUTURES["name"]
+    code = KOSDAQ_NIGHT_FUTURES["code"]
+
+    # 시도 1: Naver 모바일 API
+    naver_endpoints = [
+        "https://m.stock.naver.com/api/index/KOSDAQ150FUT/basic",
+        "https://m.stock.naver.com/api/index/KQ150F/basic",
+    ]
+    for url in naver_endpoints:
+        try:
+            resp = await client.get(url, headers={"User-Agent": _UA})
+            if resp.status_code == 200:
+                d = resp.json()
+                price_str = d.get("closePrice") or d.get("nowVal") or "0"
+                price = float(str(price_str).replace(",", ""))
+                if price > 0:
+                    change_str = d.get("compareToPreviousClosePrice") or d.get("changeVal") or "0"
+                    rate_str = d.get("fluctuationsRatio") or d.get("changeRate") or "0"
+                    high_str = d.get("highPrice") or d.get("high") or "0"
+                    low_str = d.get("lowPrice") or d.get("low") or "0"
+                    return {
+                        "name": name,
+                        "code": code,
+                        "value": price,
+                        "change": float(str(change_str).replace(",", "")),
+                        "change_rate": float(str(rate_str).replace(",", "")),
+                        "high": float(str(high_str).replace(",", "")),
+                        "low": float(str(low_str).replace(",", "")),
+                        "volume": 0,
+                        "rsi": None,
+                    }
+        except Exception as e:
+            logger.debug("Naver 코스닥150선물 조회 실패 (%s): %s", url, e)
+
+    # 시도 2: Naver 실시간 polling API (선물 코드: 106S3000)
+    try:
+        resp = await client.get(
+            "https://polling.finance.naver.com/api/realtime",
+            params={"query": "SERVICE_ITEM:106S3000"},
+            headers={"User-Agent": _UA},
+        )
+        if resp.status_code == 200:
+            d = resp.json()
+            areas = d.get("result", {}).get("areas", [])
+            if areas:
+                datas = areas[0].get("datas", [])
+                if datas:
+                    item = datas[0]
+                    nv = float(item.get("nv", 0))
+                    # Naver 선물 가격은 100으로 나누어야 할 수 있음
+                    divisor = 100 if nv > 100000 else 1
+                    return {
+                        "name": name,
+                        "code": code,
+                        "value": round(nv / divisor, 2),
+                        "change": round(float(item.get("cv", 0)) / divisor, 2),
+                        "change_rate": float(item.get("cr", 0)),
+                        "high": round(float(item.get("h", 0)) / divisor, 2),
+                        "low": round(float(item.get("l", 0)) / divisor, 2),
+                        "volume": int(item.get("aq", 0)),
+                        "rsi": None,
+                    }
+    except Exception as e:
+        logger.debug("Naver polling 코스닥150선물 조회 실패: %s", e)
+
+    return _empty(name, code)
 
 
 @router.get("/overview")
 async def market_overview(_: dict = Depends(verify_token)):
-    """국내/해외 주요 지수 시황 조회"""
+    """국내/해외 주요 지수 시황 조회 (Yahoo Finance + RSI)."""
     async with httpx.AsyncClient(timeout=15.0) as client:
-        try:
-            token = await _get_token(client)
-        except Exception:
-            logger.exception("KIS 토큰 발급 실패")
-            return {
-                "domestic": [_fallback_global(i) for i in DOMESTIC_INDICES],
-                "global": [_fallback_global(i) for i in GLOBAL_INDICES],
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
+        # 모든 지수 + 코스닥 야간선물 병렬 조회
+        tasks = [_fetch_yahoo(client, idx) for idx in INDICES]
+        tasks.append(_fetch_naver_kosdaq_futures(client))
 
-        headers = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {token}",
-            "appkey": broker_settings.KIS_APP_KEY,
-            "appsecret": broker_settings.KIS_APP_SECRET,
-        }
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        domestic = []
-        for idx in DOMESTIC_INDICES:
-            result = await _fetch_domestic_index(client, headers, idx)
-            domestic.append(result or _fallback_global(idx))
+        domestic: list[dict] = []
+        global_list: list[dict] = []
 
-        global_indices = []
-        for idx in GLOBAL_INDICES:
-            result = await _fetch_global_index(client, headers, idx)
-            global_indices.append(result or _fallback_global(idx))
+        for i, idx in enumerate(INDICES):
+            r = results[i]
+            entry = r if isinstance(r, dict) else _empty(idx["name"], idx["symbol"])
+            if idx["group"] == "domestic":
+                domestic.append(entry)
+            else:
+                global_list.append(entry)
 
-    return {
-        "domestic": domestic,
-        "global": global_indices,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+        # 코스닥150 야간선물 (마지막 결과)
+        futures_r = results[-1]
+        futures_entry = (
+            futures_r
+            if isinstance(futures_r, dict)
+            else _empty(KOSDAQ_NIGHT_FUTURES["name"], KOSDAQ_NIGHT_FUTURES["code"])
+        )
+        domestic.append(futures_entry)
+
+    return JSONResponse(
+        content={
+            "domestic": domestic,
+            "global": global_list,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
