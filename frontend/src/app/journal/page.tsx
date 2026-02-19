@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/use-auth";
 
-/* ── Types (백엔드 JournalResponse 기준) ── */
+/* ── Types ── */
 interface JournalEntry {
   id: number;
   trade_date: string;
@@ -19,6 +19,18 @@ interface JournalEntry {
   tags: string[] | null;
 }
 
+interface KISTrade {
+  order_date: string;
+  ticker: string;
+  ticker_name: string;
+  side: "BUY" | "SELL";
+  quantity: number;
+  price: number;
+  total_amount: number;
+  order_id: string;
+  selected?: boolean;
+}
+
 const EMPTY_FORM = {
   trade_date: new Date().toISOString().split("T")[0],
   ticker: "",
@@ -30,6 +42,8 @@ const EMPTY_FORM = {
   tags: "",
 };
 
+function formatDate(d: Date) { return d.toISOString().split("T")[0].replace(/-/g, ""); }
+
 export default function JournalPage() {
   const { token, checked } = useAuth();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -39,6 +53,60 @@ export default function JournalPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [detail, setDetail] = useState<JournalEntry | null>(null);
+
+  // KIS 가져오기
+  const [showKIS, setShowKIS] = useState(false);
+  const [kisTrades, setKisTrades] = useState<KISTrade[]>([]);
+  const [kisLoading, setKisLoading] = useState(false);
+  const [kisError, setKisError] = useState("");
+  const [kisImporting, setKisImporting] = useState(false);
+  const today = new Date().toISOString().split("T")[0];
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+  const [kisStart, setKisStart] = useState(weekAgo);
+  const [kisEnd, setKisEnd] = useState(today);
+
+  const fetchKIS = async () => {
+    if (!token) return;
+    setKisLoading(true);
+    setKisError("");
+    try {
+      const start = kisStart.replace(/-/g, "");
+      const end = kisEnd.replace(/-/g, "");
+      const r = await apiFetch<{ trades: KISTrade[]; is_virtual: boolean }>(
+        `/api/journal/kis-trades?start_date=${start}&end_date=${end}`, { token },
+      );
+      setKisTrades(r.trades.map((t) => ({ ...t, selected: true })));
+      if (r.trades.length === 0) setKisError("해당 기간 체결 내역이 없습니다");
+    } catch (err) {
+      setKisError(err instanceof Error ? err.message : "조회 실패");
+    } finally {
+      setKisLoading(false);
+    }
+  };
+
+  const toggleKISTrade = (idx: number) => {
+    setKisTrades((prev) => prev.map((t, i) => i === idx ? { ...t, selected: !t.selected } : t));
+  };
+
+  const importKIS = async () => {
+    if (!token) return;
+    const selected = kisTrades.filter((t) => t.selected);
+    if (selected.length === 0) return;
+    setKisImporting(true);
+    try {
+      await apiFetch("/api/journal/import-kis", {
+        token, method: "POST",
+        body: JSON.stringify({ trades: selected }),
+      });
+      setShowKIS(false);
+      setKisTrades([]);
+      await load();
+    } catch (err) {
+      setKisError(err instanceof Error ? err.message : "등록 실패");
+    } finally {
+      setKisImporting(false);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -110,13 +178,107 @@ export default function JournalPage() {
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold text-gray-200">매매일지</h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
-        >
-          {showForm ? "취소" : "+ 새 일지 작성"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setShowKIS(!showKIS); setShowForm(false); }}
+            className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-medium text-emerald-400 hover:bg-emerald-900/20 transition-colors"
+          >
+            {showKIS ? "닫기" : "KIS 체결 가져오기"}
+          </button>
+          <button
+            onClick={() => { setShowForm(!showForm); setShowKIS(false); }}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+          >
+            {showForm ? "취소" : "+ 수동 작성"}
+          </button>
+        </div>
       </div>
+
+      {/* ── KIS 체결내역 가져오기 ── */}
+      {showKIS && (
+        <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/10 p-5 space-y-4">
+          <h2 className="text-sm font-semibold text-emerald-300">KIS 계좌 체결내역 가져오기</h2>
+
+          <div className="flex items-end gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">시작일</label>
+              <input type="date" value={kisStart} onChange={(e) => setKisStart(e.target.value)}
+                className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 outline-none focus:border-emerald-500" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">종료일</label>
+              <input type="date" value={kisEnd} onChange={(e) => setKisEnd(e.target.value)}
+                className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 outline-none focus:border-emerald-500" />
+            </div>
+            <button onClick={fetchKIS} disabled={kisLoading}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 transition-colors">
+              {kisLoading ? "조회 중..." : "체결내역 조회"}
+            </button>
+          </div>
+
+          {kisError && <p className="text-xs text-red-400">{kisError}</p>}
+
+          {kisTrades.length > 0 && (
+            <>
+              <div className="overflow-auto rounded-lg border border-gray-800">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-800 bg-gray-900/60 text-left text-xs text-gray-500">
+                      <th className="px-3 py-2">
+                        <input type="checkbox"
+                          checked={kisTrades.every((t) => t.selected)}
+                          onChange={() => {
+                            const allSelected = kisTrades.every((t) => t.selected);
+                            setKisTrades((prev) => prev.map((t) => ({ ...t, selected: !allSelected })));
+                          }}
+                          className="rounded" />
+                      </th>
+                      <th className="px-3 py-2">일자</th>
+                      <th className="px-3 py-2">종목</th>
+                      <th className="px-3 py-2">매매</th>
+                      <th className="px-3 py-2 text-right">수량</th>
+                      <th className="px-3 py-2 text-right">단가</th>
+                      <th className="px-3 py-2 text-right">금액</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kisTrades.map((t, i) => (
+                      <tr key={`${t.order_id}-${i}`} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                        <td className="px-3 py-2">
+                          <input type="checkbox" checked={t.selected ?? false} onChange={() => toggleKISTrade(i)} className="rounded" />
+                        </td>
+                        <td className="px-3 py-2 text-gray-400">
+                          {t.order_date ? `${t.order_date.slice(0,4)}-${t.order_date.slice(4,6)}-${t.order_date.slice(6,8)}` : "―"}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className="text-gray-200">{t.ticker_name}</span>
+                          <span className="ml-1 text-[10px] text-gray-600">{t.ticker}</span>
+                        </td>
+                        <td className={`px-3 py-2 font-medium ${t.side === "BUY" ? "text-up" : "text-down"}`}>
+                          {t.side === "BUY" ? "매수" : "매도"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-300">{t.quantity.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-300">{Math.round(t.price).toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-300">{t.total_amount.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-500">
+                  {kisTrades.filter((t) => t.selected).length}/{kisTrades.length}건 선택
+                </span>
+                <button onClick={importKIS} disabled={kisImporting || kisTrades.filter((t) => t.selected).length === 0}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 transition-colors">
+                  {kisImporting ? "등록 중..." : `선택 항목 매매일지 등록 (${kisTrades.filter((t) => t.selected).length}건)`}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── 등록 폼 ── */}
       {showForm && (
