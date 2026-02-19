@@ -74,8 +74,8 @@ ollama pull bge-m3
 # 1. 클러스터 생성
 make setup
 
-# 2. 시크릿 생성 (아래 "시크릿 설정" 섹션 참조)
-kubectl apply -f k8s/base/secrets/kis-credentials.yaml
+# 2. 시크릿 생성 (대화형 마법사)
+./scripts/setup-secrets.sh
 
 # 3. 빌드 + 배포
 make deploy
@@ -93,8 +93,8 @@ open http://trading.local
 # 1. 클러스터 생성 (NGINX Ingress 자동 설치)
 make setup-kind
 
-# 2. 시크릿 생성
-kubectl apply -f k8s/base/secrets/kis-credentials.yaml
+# 2. 시크릿 생성 (대화형 마법사)
+./scripts/setup-secrets.sh
 
 # 3. HTTPS 인증서 생성 (선택, 권장)
 ./scripts/gen-tls-cert.sh
@@ -287,36 +287,45 @@ NGINX Ingress Controller ──── TLS 종료 (tls-secret)
 
 ## 시크릿 설정
 
-K8s 배포 전에 시크릿을 생성해야 한다.
+K8s 배포 전에 시크릿을 생성해야 한다. **대화형 마법사**를 사용하면 간편하다:
 
 ```bash
-# k8s/base/secrets/kis-credentials.yaml (Git에 올리지 않는다)
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kis-credentials
-  namespace: trading-system
-type: Opaque
-stringData:
-  KIS_APP_KEY: "발급받은-앱키"
-  KIS_APP_SECRET: "발급받은-앱시크릿"
-  KIS_ACCOUNT_NO: "00000000-01"
-  KIS_HTS_ID: "HTS-아이디"
-  KIS_IS_VIRTUAL: "true"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: trading-db-creds
-  namespace: trading-system
-type: Opaque
-stringData:
-  POSTGRES_PASSWORD: "your-secure-password"
-EOF
+./scripts/setup-secrets.sh
 ```
 
-> `trading-system` 네임스페이스가 없으면 먼저 `kubectl create namespace trading-system` 실행.
+마법사가 아래 3개 Secret을 차례로 입력받아 생성한다:
+
+| Secret | 용도 | 키 |
+|--------|------|-----|
+| `trading-db-creds` | DB 접속 | `POSTGRES_PASSWORD` |
+| `kis-credentials` | 증권 API | `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_ACCOUNT_NO`, `KIS_HTS_ID`, `KIS_IS_VIRTUAL` |
+| `trading-app-secrets` | 앱 인증/알림 | `JWT_SECRET_KEY`, `STEALTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`(선택), `TELEGRAM_CHAT_ID`(선택) |
+
+기존 Secret이 있으면 값을 불러와 기본값으로 표시한다. 완료 후 바로 배포 여부도 선택 가능.
+
+<details>
+<summary>수동으로 Secret 생성 (kubectl)</summary>
+
+```bash
+kubectl create secret generic trading-db-creds \
+  -n trading-system \
+  --from-literal=POSTGRES_PASSWORD="your-secure-password"
+
+kubectl create secret generic kis-credentials \
+  -n trading-system \
+  --from-literal=KIS_APP_KEY="발급받은-앱키" \
+  --from-literal=KIS_APP_SECRET="발급받은-앱시크릿" \
+  --from-literal=KIS_ACCOUNT_NO="00000000-01" \
+  --from-literal=KIS_HTS_ID="HTS-아이디" \
+  --from-literal=KIS_IS_VIRTUAL="true"
+
+kubectl create secret generic trading-app-secrets \
+  -n trading-system \
+  --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)" \
+  --from-literal=STEALTH_PASSWORD="your-login-password"
+```
+
+</details>
 
 ## 로컬 개발 (Docker 없이)
 
@@ -368,6 +377,7 @@ riverflow/
 │   ├── setup-k3d.sh            # k3d 클러스터 생성
 │   ├── setup-kind.sh           # Kind 클러스터 생성
 │   ├── deploy.sh               # 빌드 + 배포 (k3d/kind 자동 분기)
+│   ├── setup-secrets.sh        # K8s Secret 대화형 설정 마법사
 │   ├── gen-tls-cert.sh         # HTTPS TLS 인증서 생성
 │   └── backup-db.sh            # PostgreSQL 백업
 └── Makefile                    # 개발 명령어 모음
