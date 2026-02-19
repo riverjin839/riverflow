@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/use-auth";
 
@@ -29,6 +29,12 @@ interface KISTrade {
   total_amount: number;
   order_id: string;
   selected?: boolean;
+}
+
+interface StockSearchResult {
+  ticker: string;
+  ticker_name: string;
+  market: string;
 }
 
 const EMPTY_FORM = {
@@ -64,6 +70,64 @@ export default function JournalPage() {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
   const [kisStart, setKisStart] = useState(weekAgo);
   const [kisEnd, setKisEnd] = useState(today);
+
+  // 종목 검색
+  const [stockQuery, setStockQuery] = useState("");
+  const [stockResults, setStockResults] = useState<StockSearchResult[]>([]);
+  const [stockSearching, setStockSearching] = useState(false);
+  const [showStockDropdown, setShowStockDropdown] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const searchStock = useCallback(async (query: string) => {
+    if (!token || query.length === 0) {
+      setStockResults([]);
+      return;
+    }
+    setStockSearching(true);
+    try {
+      const r = await apiFetch<{ results: StockSearchResult[] }>(
+        `/api/journal/search-stock?q=${encodeURIComponent(query)}`, { token },
+      );
+      setStockResults(r.results);
+      setShowStockDropdown(r.results.length > 0);
+    } catch {
+      setStockResults([]);
+    } finally {
+      setStockSearching(false);
+    }
+  }, [token]);
+
+  const handleStockQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setStockQuery(val);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (val.length > 0) {
+      searchTimerRef.current = setTimeout(() => searchStock(val), 300);
+    } else {
+      setStockResults([]);
+      setShowStockDropdown(false);
+    }
+  };
+
+  const searchBoxRef = useRef<HTMLDivElement>(null);
+
+  const selectStock = (item: StockSearchResult) => {
+    setForm((prev) => ({ ...prev, ticker: item.ticker, ticker_name: item.ticker_name }));
+    setStockQuery(`${item.ticker_name} (${item.ticker})`);
+    setShowStockDropdown(false);
+    setStockResults([]);
+  };
+
+  // 드롭다운 외부 클릭 시 닫기
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
+        setShowStockDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   const fetchKIS = async () => {
     if (!token) return;
@@ -186,7 +250,11 @@ export default function JournalPage() {
             {showKIS ? "닫기" : "KIS 체결 가져오기"}
           </button>
           <button
-            onClick={() => { setShowForm(!showForm); setShowKIS(false); }}
+            onClick={() => {
+              setShowForm(!showForm);
+              setShowKIS(false);
+              if (!showForm) { setStockQuery(""); setStockResults([]); setShowStockDropdown(false); }
+            }}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
           >
             {showForm ? "취소" : "+ 수동 작성"}
@@ -292,18 +360,51 @@ export default function JournalPage() {
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 outline-none focus:border-blue-500" />
           </div>
 
-          {/* 종목코드 + 종목명 */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">종목코드</label>
-              <input type="text" name="ticker" value={form.ticker} onChange={handleChange} placeholder="005930" required
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-blue-500" />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">종목명</label>
-              <input type="text" name="ticker_name" value={form.ticker_name} onChange={handleChange} placeholder="삼성전자"
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-blue-500" />
-            </div>
+          {/* 종목 검색 */}
+          <div className="relative" ref={searchBoxRef}>
+            <label className="mb-1 block text-xs text-gray-500">종목 검색 (코드 또는 이름)</label>
+            <input
+              type="text"
+              value={stockQuery}
+              onChange={handleStockQueryChange}
+              onFocus={() => { if (stockResults.length > 0) setShowStockDropdown(true); }}
+              placeholder="종목코드(005930) 또는 종목명(삼성전자) 입력"
+              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-blue-500"
+            />
+            {stockSearching && (
+              <div className="absolute right-3 top-[30px] text-xs text-gray-500">검색중...</div>
+            )}
+            {showStockDropdown && stockResults.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full max-h-60 overflow-auto rounded-lg border border-gray-700 bg-gray-800 shadow-xl">
+                {stockResults.map((item) => (
+                  <button
+                    key={item.ticker}
+                    type="button"
+                    onClick={() => selectStock(item)}
+                    className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm hover:bg-gray-700/60 transition-colors"
+                  >
+                    <div>
+                      <span className="font-medium text-gray-200">{item.ticker_name}</span>
+                      <span className="ml-2 text-xs text-gray-500">{item.ticker}</span>
+                    </div>
+                    {item.market && (
+                      <span className="rounded bg-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400">{item.market}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {form.ticker && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="rounded-lg bg-blue-900/30 px-2 py-1 text-xs text-blue-300">
+                  {form.ticker_name || form.ticker} ({form.ticker})
+                </span>
+                <button type="button" onClick={() => {
+                  setForm((prev) => ({ ...prev, ticker: "", ticker_name: "" }));
+                  setStockQuery("");
+                }} className="text-xs text-gray-500 hover:text-gray-300">초기화</button>
+              </div>
+            )}
           </div>
 
           {/* 매수가 / 매도가 / 수량 */}
