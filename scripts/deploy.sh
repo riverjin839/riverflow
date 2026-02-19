@@ -60,6 +60,12 @@ echo ""
 echo "=== Kustomize 배포 ($OVERLAY) ==="
 kubectl apply -k "k8s/overlays/$OVERLAY"
 
+# 이미지가 항상 :latest이므로 강제 재시작
+echo ""
+echo "=== Pod 재시작 (rolling restart) ==="
+kubectl -n trading-system rollout restart deployment/backend  2>/dev/null || true
+kubectl -n trading-system rollout restart deployment/frontend 2>/dev/null || true
+
 # Kind 배포 시 기존 실패한 CronJob Pod/Job 정리
 if [ "$OVERLAY" = "kind" ]; then
     echo ""
@@ -69,8 +75,8 @@ fi
 
 echo ""
 echo "=== 배포 상태 확인 ==="
-kubectl -n trading-system rollout status deployment/backend --timeout=120s
-kubectl -n trading-system rollout status deployment/postgres --timeout=120s
+kubectl -n trading-system rollout status deployment/backend  --timeout=120s
+kubectl -n trading-system rollout status deployment/frontend --timeout=120s
 
 echo ""
 if [ "$OVERLAY" = "kind" ]; then
