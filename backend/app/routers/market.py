@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
-_HEADERS = {"User-Agent": _UA}
+# Naver API별 헤더 (Referer 없으면 차단당함)
+_H_NAVER_M = {"User-Agent": _UA, "Referer": "https://m.stock.naver.com/"}
+_H_NAVER_WEB = {"User-Agent": _UA, "Referer": "https://finance.naver.com/"}
+_H_YAHOO = {"User-Agent": _UA}
 
 # ── 국내 지수 ──
 DOMESTIC = [
@@ -87,7 +90,7 @@ async def _naver_domestic(client: httpx.AsyncClient, idx: dict) -> dict:
     try:
         resp = await client.get(
             f"https://m.stock.naver.com/api/index/{code}/basic",
-            headers=_HEADERS,
+            headers=_H_NAVER_M,
         )
         resp.raise_for_status()
         d = resp.json()
@@ -128,7 +131,7 @@ async def _naver_domestic_history(client: httpx.AsyncClient, code: str, count: i
         resp = await client.get(
             f"https://m.stock.naver.com/api/index/{code}/price",
             params={"page": 1, "pageSize": count},
-            headers=_HEADERS,
+            headers=_H_NAVER_M,
         )
         if resp.status_code != 200:
             return []
@@ -203,7 +206,7 @@ async def _naver_world_history(client: httpx.AsyncClient, symbol: str, count: in
         resp = await client.get(
             "https://finance.naver.com/world/worldDayListJson.naver",
             params={"symbol": symbol, "fdtc": "0", "page": 1},
-            headers=_HEADERS,
+            headers=_H_NAVER_WEB,
         )
         if resp.status_code != 200:
             logger.debug("Naver world history %s: HTTP %d", symbol, resp.status_code)
@@ -246,7 +249,7 @@ async def _kosdaq_night_futures(client: httpx.AsyncClient) -> dict:
         try:
             resp = await client.get(
                 f"https://m.stock.naver.com/api/index/{ep}/basic",
-                headers=_HEADERS,
+                headers=_H_NAVER_M,
             )
             if resp.status_code == 200:
                 d = resp.json()
@@ -269,7 +272,7 @@ async def _kosdaq_night_futures(client: httpx.AsyncClient) -> dict:
         resp = await client.get(
             "https://polling.finance.naver.com/api/realtime",
             params={"query": "SERVICE_ITEM:106S3000"},
-            headers=_HEADERS,
+            headers=_H_NAVER_WEB,
         )
         if resp.status_code == 200:
             areas = resp.json().get("result", {}).get("areas", [])
@@ -302,7 +305,7 @@ async def _yahoo_chart(client: httpx.AsyncClient, symbol: str, name: str, code: 
             resp = await client.get(
                 f"https://{host}/v8/finance/chart/{symbol}",
                 params={"interval": "1d", "range": "1mo"},
-                headers=_HEADERS, follow_redirects=True,
+                headers=_H_YAHOO, follow_redirects=True,
             )
             resp.raise_for_status()
             results = resp.json().get("chart", {}).get("result")
@@ -337,7 +340,7 @@ async def _yahoo_history(client: httpx.AsyncClient, symbol: str, count: int = 30
             resp = await client.get(
                 f"https://{host}/v8/finance/chart/{symbol}",
                 params={"interval": "1d", "range": "3mo"},
-                headers=_HEADERS, follow_redirects=True,
+                headers=_H_YAHOO, follow_redirects=True,
             )
             resp.raise_for_status()
             results = resp.json().get("chart", {}).get("result")
@@ -373,7 +376,7 @@ async def _naver_stock_quote(client: httpx.AsyncClient, ticker: str) -> dict | N
     try:
         resp = await client.get(
             f"https://m.stock.naver.com/api/stock/{ticker}/basic",
-            headers=_HEADERS,
+            headers=_H_NAVER_M,
         )
         if resp.status_code != 200:
             return None
@@ -387,7 +390,7 @@ async def _naver_stock_quote(client: httpx.AsyncClient, ticker: str) -> dict | N
         hist_resp = await client.get(
             f"https://m.stock.naver.com/api/stock/{ticker}/price",
             params={"page": 1, "pageSize": 30},
-            headers=_HEADERS,
+            headers=_H_NAVER_M,
         )
         rsi = None
         if hist_resp.status_code == 200:
@@ -420,7 +423,7 @@ async def _naver_stock_quote(client: httpx.AsyncClient, ticker: str) -> dict | N
 @router.get("/overview")
 async def market_overview(_: dict = Depends(verify_token)):
     """국내/해외 주요 지수 시황 조회."""
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         tasks: list = []
         for idx in DOMESTIC:
             tasks.append(_naver_domestic(client, idx))
@@ -434,13 +437,19 @@ async def market_overview(_: dict = Depends(verify_token)):
         domestic: list[dict] = []
         for i in range(n_dom):
             r = results[i]
+            if isinstance(r, Exception):
+                logger.error("domestic[%d] %s error: %s", i, DOMESTIC[i]["name"], r)
             domestic.append(r if isinstance(r, dict) else _empty(DOMESTIC[i]["name"], DOMESTIC[i]["code"], DOMESTIC[i]["link"]))
         fut = results[n_dom]
+        if isinstance(fut, Exception):
+            logger.error("kosdaq night futures error: %s", fut)
         domestic.append(fut if isinstance(fut, dict) else _empty("코스닥150 야간선물", "KQ150NF"))
 
         global_list: list[dict] = []
         for i, idx in enumerate(GLOBAL):
             r = results[n_dom + 1 + i]
+            if isinstance(r, Exception):
+                logger.error("global[%d] %s error: %s", i, idx["name"], r)
             global_list.append(r if isinstance(r, dict) else _empty(idx["name"], idx.get("naver") or idx.get("yahoo", ""), idx.get("link", "")))
 
     return JSONResponse(
@@ -478,7 +487,7 @@ async def market_chart(
                     resp = await client.get(
                         f"https://m.stock.naver.com/api/stock/{code}/price",
                         params={"page": 1, "pageSize": days},
-                        headers=_HEADERS,
+                        headers=_H_NAVER_M,
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -527,10 +536,16 @@ async def market_check(_: dict = Depends(verify_token)):
         "yahoo_v8": "https://query1.finance.yahoo.com/v8/finance/chart/^KS11?interval=1d&range=5d",
     }
     report: dict[str, dict] = {}
+    header_map = {
+        "naver_domestic": _H_NAVER_M,
+        "naver_world_json": _H_NAVER_WEB,
+        "naver_polling": _H_NAVER_WEB,
+        "yahoo_v8": _H_YAHOO,
+    }
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         for label, url in sources.items():
             try:
-                resp = await client.get(url, headers=_HEADERS)
+                resp = await client.get(url, headers=header_map.get(label, _H_YAHOO))
                 report[label] = {"status": resp.status_code, "ok": resp.status_code == 200, "preview": resp.text[:300]}
             except Exception as e:
                 report[label] = {"status": 0, "ok": False, "error": str(e)}

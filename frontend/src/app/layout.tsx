@@ -16,7 +16,10 @@ export default function RootLayout({
     <html lang="ko" className="dark">
       <body>
         <NavBar />
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        {/* lg 이상에서 사이드바(w-52) 만큼 왼쪽 마진 */}
+        <main className="px-4 py-6 lg:ml-52">
+          <div className="mx-auto max-w-7xl">{children}</div>
+        </main>
       </body>
     </html>
   );
