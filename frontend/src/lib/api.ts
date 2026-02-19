@@ -16,7 +16,7 @@ export async function apiFetch<T>(path: string, options: FetchOptions = {}): Pro
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { headers, ...rest });
+  const res = await fetch(`${API_BASE}${path}`, { headers, cache: "no-store", ...rest });
 
   if (!res.ok) {
     throw new Error(`API Error: ${res.status} ${res.statusText}`);
