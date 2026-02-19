@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { NavBar } from "@/components/nav-bar";
+import { AppShell } from "@/components/app-shell";
 
 export const metadata: Metadata = {
   title: "Riverflow Trading",
@@ -15,11 +15,7 @@ export default function RootLayout({
   return (
     <html lang="ko" className="dark">
       <body>
-        <NavBar />
-        {/* lg 이상에서 사이드바(w-52) 만큼 왼쪽 마진 */}
-        <main className="px-4 py-6 lg:ml-52">
-          <div className="mx-auto max-w-7xl">{children}</div>
-        </main>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

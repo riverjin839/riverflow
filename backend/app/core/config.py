@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # JWT
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 30
+    JWT_EXPIRE_MINUTES: int = 1440  # 24시간
 
     # 스텔스 로그인
     STEALTH_PASSWORD: str = "change-me"
