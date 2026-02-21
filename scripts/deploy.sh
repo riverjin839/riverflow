@@ -25,10 +25,10 @@ echo "=== Docker 이미지 빌드 (target: $OVERLAY) ==="
 build_image() {
     local name="$1"; shift
     echo ">>> $name 빌드"
-    if ! docker build "$@" 2>&1; then
+    if ! docker build --provenance=false "$@" 2>&1; then
         echo "!!! $name 빌드 실패 — 캐시 정리 후 재시도"
         docker builder prune -f 2>/dev/null || true
-        docker build "$@"
+        docker build --provenance=false "$@"
     fi
 }
 
