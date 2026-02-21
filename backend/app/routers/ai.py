@@ -206,10 +206,10 @@ async def _retrieve_context(
         result = await db.execute(
             text(
                 "SELECT id, title, content, "
-                "1 - (embedding <=> :vec::vector) AS similarity "
+                "1 - (embedding <=> CAST(:vec AS vector)) AS similarity "
                 "FROM user_documents "
                 "WHERE embedding IS NOT NULL "
-                "ORDER BY embedding <=> :vec::vector "
+                "ORDER BY embedding <=> CAST(:vec AS vector) "
                 "LIMIT :k"
             ),
             {"vec": str(vec), "k": top_k},
