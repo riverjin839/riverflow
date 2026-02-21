@@ -9,7 +9,6 @@ resources:
   - backend/backend.yaml
   - frontend/frontend.yaml
   # Ollama LLM - 내부 K8s pod (ClusterIP 서비스: http://ollama:11434)
-  - ollama/rbac.yaml
   - ollama/ollama.yaml
   # Workers
   - workers/condition-scanner.yaml
@@ -18,7 +17,6 @@ resources:
   - workers/morning-briefing.yaml
   - workers/news-crawler.yaml
   - workers/daily-review.yaml
-  - workers/k8s-daily-monitor.yaml
 
 configMapGenerator:
   - name: trading-config

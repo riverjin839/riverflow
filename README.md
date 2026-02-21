@@ -101,21 +101,17 @@ make setup-kind
 # 3. HTTPS 인증서 생성 (선택, 권장)
 ./scripts/gen-tls-cert.sh
 
-# 4. Ollama 이미지를 Kind 클러스터에 미리 로드 (권장)
-#    → kind 노드가 매번 Docker Hub에서 pull하는 것을 방지
-docker pull ollama/ollama:latest
-kind load docker-image ollama/ollama:latest --name trading
-
-# 5. 빌드 + 배포
+# 4. 빌드 + 배포
 make deploy-kind
+# Ollama pod는 Docker Hub에서 자동으로 이미지 pull (imagePullPolicy: IfNotPresent)
 
-# 6. /etc/hosts 추가
+# 5. /etc/hosts 추가
 echo "127.0.0.1 trading.local" | sudo tee -a /etc/hosts
 
-# 7. Ollama pod 기동 확인 (최초 모델 다운로드로 수 분 소요)
+# 6. Ollama pod 기동 확인 (최초 모델 다운로드로 수 분 소요)
 kubectl -n trading-system logs -l app=ollama -f
 
-# 8. 접속
+# 7. 접속
 open https://trading.local
 ```
 
@@ -377,7 +373,6 @@ riverflow/
 │   ├── morning_briefing.py     # 장전 시황 브리핑 (08:30 KST)
 │   ├── daily_review.py         # 장후 리뷰 (16:00 KST)
 │   ├── news_crawler.py         # 뉴스 크롤링 + 임베딩 (2시간마다)
-│   └── k8s_daily_monitor.py    # K8s 클러스터 상태 모니터링 + LLM 분석 (08:00 KST)
 ├── kiwoom-bridge/              # 키움증권 Windows 브릿지 (별도 머신)
 ├── k8s/                        # Kubernetes 매니페스트
 │   ├── base/
@@ -425,20 +420,15 @@ Ollama LLM 서버가 클러스터 내부 pod로 운영된다. 호스트 머신 �
 
 | 항목 | 값 |
 |------|----|
-| 이미지 | `ollama/ollama:latest` |
+| 이미지 | `ollama/ollama:latest` (`imagePullPolicy: IfNotPresent`) |
 | 내부 접근 URL | `http://ollama:11434` (ClusterIP) |
 | 사용 모델 | `llama3` (텍스트 생성), `bge-m3` (임베딩) |
 | 스토리지 | PVC 20Gi (`/root/.ollama`) — 모델 캐시 유지 |
 | 모델 초기화 | pod 기동 시 `ollama pull` 자동 실행 (PVC 캐시 존재 시 즉시 완료) |
 
-### Kind 환경에서 Ollama 이미지 로드
-
-Kind는 기본적으로 로컬 이미지를 사용하므로 공개 이미지도 미리 로드하면 빠르다:
-
-```bash
-docker pull ollama/ollama:latest
-kind load docker-image ollama/ollama:latest --name trading
-```
+> **`kind load` 불필요**: `ollama/ollama:latest`는 multi-arch 공개 이미지라 `kind load`시
+> `--all-platforms` 오류가 발생한다. `imagePullPolicy: IfNotPresent`로 설정하여
+> Kind 노드가 Docker Hub에서 직접 pull하도록 한다.
 
 ### Ollama 상태 확인
 
@@ -452,27 +442,6 @@ kubectl -n trading-system exec -it deploy/ollama -- ollama list
 # 로그 (모델 pull 진행 상황)
 kubectl -n trading-system logs -l app=ollama -f
 ```
-
-## Workers
-
-| 워커 | 스케줄 | 역할 |
-|------|--------|------|
-| `condition_scanner` | 장중 5분마다 | 조건검색 스캔 + 자동매매 트리거 |
-| `stop_loss_checker` | 장중 1분마다 | 손절/익절 모니터링 |
-| `morning_briefing` | 08:30 KST | 장전 시황 브리핑 (KIS 지수 + LLM) |
-| `daily_review` | 16:00 KST | 장후 매매 리뷰 (LLM) |
-| `news_crawler` | 2시간마다 | 네이버 금융 뉴스 크롤링 + 임베딩 + LLM 분석 |
-| `k8s_daily_monitor` | 08:00 KST | K8s 클러스터 상태 모니터링 + LLM 이상 징후 분석 |
-| `realtime_feed` | 상시 (Deployment) | KIS WebSocket 실시간 시세 수신 |
-
-### k8s_daily_monitor
-
-K8s in-cluster API로 `trading-system` 네임스페이스의 pod, CronJob, 실패 Job 상태를 수집하고
-내부 Ollama(`http://ollama:11434`)로 이상 징후를 분석한다.
-
-- 수집 항목: pod 상태·재시작 횟수, CronJob 마지막 실행/성공 시각, 최근 24h 실패 Job
-- 분석 결과: `market_briefing` 테이블(`briefing_type='k8s_daily_monitor'`) 저장 + Telegram 발송
-- RBAC: `k8s-monitor` ServiceAccount (pod/cronjob/job 읽기 전용)
 
 ## 자동매매 안전장치
 

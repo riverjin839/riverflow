@@ -34,6 +34,9 @@ spec:
       containers:
         - name: ollama
           image: ollama/ollama:latest
+          # IfNotPresent: Kind 노드가 Docker Hub에서 직접 pull (kind load 불필요)
+          # multi-arch 이미지라 kind load --all-platforms 오류 발생하므로 이 방식 사용
+          imagePullPolicy: IfNotPresent
           # ollama serve 실행 후 모델 pull (첫 기동 시에만 다운로드)
           command: ["/bin/sh", "-c"]
           args:
