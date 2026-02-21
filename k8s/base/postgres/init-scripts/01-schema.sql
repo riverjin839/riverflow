@@ -143,6 +143,15 @@ CREATE TABLE supply_snapshots (
     details JSONB
 );
 
+-- AI 챗 대화 히스토리
+CREATE TABLE chat_messages (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(50) NOT NULL,
+    role VARCHAR(10) NOT NULL,          -- user / assistant
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- =============================================================
 -- 4. 인덱스
 -- =============================================================
@@ -173,3 +182,4 @@ CREATE INDEX idx_sector_analyzed ON sector_analysis(analyzed_at);
 CREATE INDEX idx_sector_leading ON sector_analysis(is_leading) WHERE is_leading = true;
 CREATE INDEX idx_supply_time ON supply_snapshots(snapshot_time);
 CREATE INDEX idx_supply_market ON supply_snapshots(market, snapshot_time);
+CREATE INDEX idx_chat_session ON chat_messages(session_id, created_at);

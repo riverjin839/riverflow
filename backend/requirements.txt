@@ -7,6 +7,8 @@ pydantic-settings==2.7.1
 httpx==0.28.1
 PyJWT==2.10.1
 beautifulsoup4==4.12.3
+PyPDF2==3.0.1
+python-multipart==0.0.20
 websockets==14.1
 mplfinance==0.12.10b0
 matplotlib==3.10.0
