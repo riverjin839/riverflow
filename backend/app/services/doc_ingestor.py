@@ -81,7 +81,7 @@ async def ingest_document(
                 await db.execute(
                     text(
                         "INSERT INTO user_documents (doc_type, title, content, embedding) "
-                        "VALUES (:doc_type, :title, :content, :embedding::vector)"
+                        "VALUES (:doc_type, :title, :content, CAST(:embedding AS vector))"
                     ),
                     {
                         "doc_type": doc_type,

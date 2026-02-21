@@ -119,10 +119,10 @@ async def search_news(
     result = await db.execute(
         text(
             "SELECT id, title, url, source, "
-            "1 - (embedding <=> :vec::vector) AS similarity "
+            "1 - (embedding <=> CAST(:vec AS vector)) AS similarity "
             "FROM news_articles "
             "WHERE embedding IS NOT NULL "
-            "ORDER BY embedding <=> :vec::vector "
+            "ORDER BY embedding <=> CAST(:vec AS vector) "
             "LIMIT :lim"
         ),
         {"vec": str(query_vec), "lim": limit},
