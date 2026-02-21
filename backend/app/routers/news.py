@@ -36,15 +36,19 @@ async def list_news(
     _: dict = Depends(verify_token),
 ):
     """뉴스 목록 조회 (impact_min으로 영향도 필터링 가능)"""
-    query = select(NewsArticle)
-    if impact_min is not None:
-        query = query.where(NewsArticle.impact_score >= impact_min)
-    result = await db.execute(
-        query.order_by(NewsArticle.crawled_at.desc())
-        .offset(skip)
-        .limit(limit)
-    )
-    return result.scalars().all()
+    try:
+        query = select(NewsArticle)
+        if impact_min is not None:
+            query = query.where(NewsArticle.impact_score >= impact_min)
+        result = await db.execute(
+            query.order_by(NewsArticle.crawled_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        return result.scalars().all()
+    except Exception:
+        await db.rollback()
+        return []
 
 
 @router.get("/search")
