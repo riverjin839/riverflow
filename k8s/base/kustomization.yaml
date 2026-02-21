@@ -8,17 +8,23 @@ resources:
   - postgres/postgres.yaml
   - backend/backend.yaml
   - frontend/frontend.yaml
+  # Ollama LLM - 내부 K8s pod (ClusterIP 서비스: http://ollama:11434)
+  - ollama/rbac.yaml
+  - ollama/ollama.yaml
+  # Workers
   - workers/condition-scanner.yaml
   - workers/stop-loss-checker.yaml
   - workers/realtime-feed.yaml
   - workers/morning-briefing.yaml
   - workers/news-crawler.yaml
   - workers/daily-review.yaml
+  - workers/k8s-daily-monitor.yaml
 
 configMapGenerator:
   - name: trading-config
     literals:
-      - OLLAMA_BASE_URL=http://host.k3d.internal:11434
+      # 내부 K8s ClusterIP 서비스로 연결 (host.k3d.internal 불필요)
+      - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
       - EMBEDDING_MODEL=bge-m3
       - KIS_IS_VIRTUAL=true

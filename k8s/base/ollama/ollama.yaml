@@ -1,0 +1,106 @@
+# Ollama LLM 서버 - 내부 K8s pod 형태로 배포
+# 모델 스토리지: PVC (llama3 ~4GB, bge-m3 ~2GB 포함 여유 포함)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: trading-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: trading-system
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  strategy:
+    type: Recreate  # PVC RWO 특성상 롤링 불가
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          # ollama serve 실행 후 모델 pull (첫 기동 시에만 다운로드)
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              SERVE_PID=$!
+              echo "Ollama 서버 기동 대기 중..."
+              until curl -sf http://localhost:11434/api/tags > /dev/null; do
+                sleep 3
+              done
+              echo "모델 pull 시작 (캐시 존재 시 즉시 완료)"
+              ollama pull llama3
+              ollama pull bge-m3
+              echo "모델 준비 완료. 서버 유지 중..."
+              wait $SERVE_PID
+          ports:
+            - name: http
+              containerPort: 11434
+              protocol: TCP
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0"
+            - name: OLLAMA_MODELS
+              value: "/root/.ollama/models"
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /root/.ollama
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "1000m"
+            limits:
+              memory: "8Gi"
+              cpu: "4000m"
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: ollama-models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
+# ClusterIP 서비스: 내부 pod에서 http://ollama:11434 로 접근
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: trading-system
+  labels:
+    app: ollama
+spec:
+  type: ClusterIP
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+      protocol: TCP

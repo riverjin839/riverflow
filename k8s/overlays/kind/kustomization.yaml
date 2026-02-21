@@ -19,12 +19,13 @@ patches:
         path: /spec/jobTemplate/spec/template/spec/containers/0/imagePullPolicy
         value: Never
 
-# Kind 환경: Ollama 호스트가 host.docker.internal (Mac)
+# Kind 환경: Ollama도 내부 pod로 운영 - base와 동일한 ClusterIP URL 사용
+# (host.docker.internal 불필요 - 클러스터 내부 서비스로 통신)
 configMapGenerator:
   - name: trading-config
     behavior: replace
     literals:
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
       - EMBEDDING_MODEL=bge-m3
       - KIS_IS_VIRTUAL=true
