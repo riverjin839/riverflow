@@ -8,36 +8,42 @@ KIS(한국투자증권) API를 연동하여 조건 검색, 자동매매, 손절/
 ## 아키텍처
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                         │
-│                  (k3d 또는 Kind)                              │
-│                                                              │
-│  ┌──────────┐  ┌───────────┐  ┌───────────────────────────┐ │
-│  │ Frontend │  │  Backend   │  │      Workers (CronJob)    │ │
-│  │ Next.js  │──│  FastAPI   │  │                           │ │
-│  │ :3000    │  │  :8000     │  │  condition_scanner  */5m  │ │
-│  └──────────┘  └─────┬─────┘  │  stop_loss_checker  */1m  │ │
-│                      │        │  morning_briefing   08:30  │ │
-│                      │        │  daily_review       16:00  │ │
-│                      │        │  news_crawler       */2h   │ │
-│                      │        └───────────┬───────────────┘ │
-│                      │                    │                  │
-│              ┌───────▼────────┐          │                  │
-│              │   PostgreSQL   │◄─────────┘                  │
-│              │   + pgvector   │                              │
-│              └────────────────┘                              │
-│                                                              │
-│  ┌────────────────────┐                                      │
-│  │  realtime_feed     │  (Deployment, 상시 실행)              │
-│  │  KIS WebSocket     │                                      │
-│  └────────────────────┘                                      │
-└──────────────────────────────────────────────────────────────┘
-         │                    │                    │
-    ┌────▼────┐       ┌──────▼──────┐     ┌──────▼──────┐
-    │  Ollama  │       │  KIS API    │     │  Telegram   │
-    │  LLM     │       │  REST/WS    │     │  Bot API    │
-    └──────────┘       └─────────────┘     └─────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     Kubernetes Cluster                           │
+│                   (k3d 또는 Kind)                                │
+│                                                                 │
+│  ┌──────────┐  ┌───────────┐  ┌─────────────────────────────┐  │
+│  │ Frontend │  │  Backend   │  │      Workers (CronJob)      │  │
+│  │ Next.js  │──│  FastAPI   │  │                             │  │
+│  │ :3000    │  │  :8000     │  │  condition_scanner  */5m    │  │
+│  └──────────┘  └─────┬─────┘  │  stop_loss_checker  */1m    │  │
+│                      │        │  morning_briefing   08:30    │  │
+│                      │        │  daily_review       16:00    │  │
+│                      │        │  news_crawler       */2h     │  │
+│                      │        │  k8s_daily_monitor  08:00    │  │
+│                      │        └──────────┬──────────────────┘  │
+│                      │                   │                      │
+│              ┌───────▼────────┐         │                      │
+│              │   PostgreSQL   │◄────────┘                      │
+│              │   + pgvector   │                                 │
+│              └────────────────┘                                 │
+│                                                                 │
+│  ┌────────────────────┐   ┌──────────────────────────────────┐  │
+│  │  realtime_feed     │   │  Ollama (내부 pod)                │  │
+│  │  KIS WebSocket     │   │  llama3 + bge-m3                 │  │
+│  │  (Deployment)      │   │  http://ollama:11434 (ClusterIP) │  │
+│  └────────────────────┘   └──────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+              │                              │
+    ┌─────────▼──────────┐       ┌──────────▼──────┐
+    │  KIS API           │       │  Telegram        │
+    │  REST / WebSocket  │       │  Bot API         │
+    └────────────────────┘       └─────────────────┘
 ```
+
+> **Ollama 내부화**: Ollama가 K8s 클러스터 내부 pod로 운영된다.
+> 모든 워커/백엔드는 `http://ollama:11434` (ClusterIP)로 직접 통신하며
+> 호스트 머신 설치가 불필요하다.
 
 ### 컴포넌트 요약
 
@@ -46,8 +52,8 @@ KIS(한국투자증권) API를 연동하여 조건 검색, 자동매매, 손절/
 | **Backend** | REST API 서버. 인증, CRUD, 브로커 연동, AI 피드백 | Python 3.12, FastAPI, SQLAlchemy async |
 | **Frontend** | 대시보드, 매매일지 UI | Next.js 15, React 19, TypeScript |
 | **PostgreSQL** | 매매일지, 뉴스, 조건식, 주문 이력 저장 + 벡터 검색 | PostgreSQL 16 + pgvector |
-| **Workers** | 장중 자동 스캔, 손절 체크, 브리핑 생성, 뉴스 크롤링 | Python (K8s CronJob/Deployment) |
-| **Ollama** | LLM 추론 (llama3) + 텍스트 임베딩 (bge-m3) | 호스트 머신에서 실행 |
+| **Workers** | 장중 자동 스캔, 손절 체크, 브리핑 생성, 뉴스 크롤링, K8s 모니터링 | Python (K8s CronJob/Deployment) |
+| **Ollama** | LLM 추론 (llama3) + 텍스트 임베딩 (bge-m3) | **K8s 내부 pod** — `http://ollama:11434` |
 | **KIS API** | 잔고 조회, 현재가, 주문 실행, 실시간 시세 | REST + WebSocket |
 
 ## 사전 요구사항
@@ -57,14 +63,10 @@ KIS(한국투자증권) API를 연동하여 조건 검색, 자동매매, 손절/
 - **Kubernetes 런타임** (아래 중 택 1):
   - [k3d](https://k3d.io) — k3s 기반, Traefik 내장 (`brew install k3d`)
   - [Kind](https://kind.sigs.k8s.io) — Docker-in-Docker 방식 (`brew install kind`)
-- **Ollama** — 로컬 LLM 서버 (`brew install ollama`)
 - **KIS API 키** — [한국투자증권 Open API](https://apiportal.koreainvestment.com) 에서 발급
 
-```bash
-# Ollama 모델 다운로드
-ollama pull llama3
-ollama pull bge-m3
-```
+> **Ollama 호스트 설치 불필요**: Ollama는 K8s 클러스터 내부 pod로 자동 배포된다.
+> llama3, bge-m3 모델은 Ollama pod 최초 기동 시 자동으로 다운로드된다.
 
 ## 빠른 시작
 
@@ -99,13 +101,21 @@ make setup-kind
 # 3. HTTPS 인증서 생성 (선택, 권장)
 ./scripts/gen-tls-cert.sh
 
-# 4. 빌드 + 배포
+# 4. Ollama 이미지를 Kind 클러스터에 미리 로드 (권장)
+#    → kind 노드가 매번 Docker Hub에서 pull하는 것을 방지
+docker pull ollama/ollama:latest
+kind load docker-image ollama/ollama:latest --name trading
+
+# 5. 빌드 + 배포
 make deploy-kind
 
-# 5. /etc/hosts 추가
+# 6. /etc/hosts 추가
 echo "127.0.0.1 trading.local" | sudo tee -a /etc/hosts
 
-# 6. 접속
+# 7. Ollama pod 기동 확인 (최초 모델 다운로드로 수 분 소요)
+kubectl -n trading-system logs -l app=ollama -f
+
+# 8. 접속
 open https://trading.local
 ```
 
@@ -116,7 +126,7 @@ open https://trading.local
 | 기반 | k3s (경량 K8s) | Docker-in-Docker |
 | Ingress | Traefik 내장 | NGINX Ingress 별도 설치 |
 | 이미지 로딩 | 로컬 레지스트리 (`docker push`) | `kind load docker-image` |
-| 호스트 접근 | `host.k3d.internal` | `host.docker.internal` |
+| Ollama 연결 | `http://ollama:11434` (ClusterIP, 동일) | `http://ollama:11434` (ClusterIP, 동일) |
 | 리소스 사용량 | 상대적으로 가벼움 | Docker 위에 Docker라 약간 무거움 |
 | macOS 호환성 | Docker Desktop 필요 | Docker Desktop 필요 |
 | 장점 | 프로덕션 K3s와 동일 환경 | 설정 단순, CNCF 공식 도구 |
@@ -366,10 +376,13 @@ riverflow/
 │   ├── realtime_feed.py        # KIS WebSocket 실시간 시세
 │   ├── morning_briefing.py     # 장전 시황 브리핑 (08:30 KST)
 │   ├── daily_review.py         # 장후 리뷰 (16:00 KST)
-│   └── news_crawler.py         # 뉴스 크롤링 + 임베딩 (2시간마다)
+│   ├── news_crawler.py         # 뉴스 크롤링 + 임베딩 (2시간마다)
+│   └── k8s_daily_monitor.py    # K8s 클러스터 상태 모니터링 + LLM 분석 (08:00 KST)
 ├── kiwoom-bridge/              # 키움증권 Windows 브릿지 (별도 머신)
 ├── k8s/                        # Kubernetes 매니페스트
-│   ├── base/                   # 공통 리소스
+│   ├── base/
+│   │   ├── ollama/             # Ollama LLM pod (Deployment + ClusterIP Service + PVC)
+│   │   └── workers/            # 워커 CronJob/Deployment 매니페스트
 │   └── overlays/
 │       ├── local/              # k3d 오버레이
 │       └── kind/               # Kind 오버레이
@@ -405,6 +418,61 @@ riverflow/
 | `POST` | `/api/alerts/overheat` | 단기 과열 종목 감지 |
 | `GET` | `/api/supply/latest` | 최근 수급 스냅샷 |
 | `GET` | `/api/supply/trend` | KOSPI/KOSDAQ 수급 추세 요약 |
+
+## Ollama (내부 K8s pod)
+
+Ollama LLM 서버가 클러스터 내부 pod로 운영된다. 호스트 머신 설치가 필요 없다.
+
+| 항목 | 값 |
+|------|----|
+| 이미지 | `ollama/ollama:latest` |
+| 내부 접근 URL | `http://ollama:11434` (ClusterIP) |
+| 사용 모델 | `llama3` (텍스트 생성), `bge-m3` (임베딩) |
+| 스토리지 | PVC 20Gi (`/root/.ollama`) — 모델 캐시 유지 |
+| 모델 초기화 | pod 기동 시 `ollama pull` 자동 실행 (PVC 캐시 존재 시 즉시 완료) |
+
+### Kind 환경에서 Ollama 이미지 로드
+
+Kind는 기본적으로 로컬 이미지를 사용하므로 공개 이미지도 미리 로드하면 빠르다:
+
+```bash
+docker pull ollama/ollama:latest
+kind load docker-image ollama/ollama:latest --name trading
+```
+
+### Ollama 상태 확인
+
+```bash
+# pod 상태
+kubectl -n trading-system get pods -l app=ollama
+
+# 모델 목록 (서버 내부)
+kubectl -n trading-system exec -it deploy/ollama -- ollama list
+
+# 로그 (모델 pull 진행 상황)
+kubectl -n trading-system logs -l app=ollama -f
+```
+
+## Workers
+
+| 워커 | 스케줄 | 역할 |
+|------|--------|------|
+| `condition_scanner` | 장중 5분마다 | 조건검색 스캔 + 자동매매 트리거 |
+| `stop_loss_checker` | 장중 1분마다 | 손절/익절 모니터링 |
+| `morning_briefing` | 08:30 KST | 장전 시황 브리핑 (KIS 지수 + LLM) |
+| `daily_review` | 16:00 KST | 장후 매매 리뷰 (LLM) |
+| `news_crawler` | 2시간마다 | 네이버 금융 뉴스 크롤링 + 임베딩 + LLM 분석 |
+| `k8s_daily_monitor` | 08:00 KST | K8s 클러스터 상태 모니터링 + LLM 이상 징후 분석 |
+| `realtime_feed` | 상시 (Deployment) | KIS WebSocket 실시간 시세 수신 |
+
+### k8s_daily_monitor
+
+K8s in-cluster API로 `trading-system` 네임스페이스의 pod, CronJob, 실패 Job 상태를 수집하고
+내부 Ollama(`http://ollama:11434`)로 이상 징후를 분석한다.
+
+- 수집 항목: pod 상태·재시작 횟수, CronJob 마지막 실행/성공 시각, 최근 24h 실패 Job
+- 분석 결과: `market_briefing` 테이블(`briefing_type='k8s_daily_monitor'`) 저장 + Telegram 발송
+- RBAC: `k8s-monitor` ServiceAccount (pod/cronjob/job 읽기 전용)
 
 ## 자동매매 안전장치
 
@@ -467,7 +535,7 @@ make backup         # PostgreSQL DB 백업
 | `KIS_APP_SECRET` | 한투 API 시크릿 | - |
 | `KIS_ACCOUNT_NO` | 계좌번호 (`XXXXXXXX-01`) | - |
 | `KIS_IS_VIRTUAL` | 모의투자 여부 | `true` |
-| `OLLAMA_BASE_URL` | Ollama 서버 주소 | `http://localhost:11434` |
+| `OLLAMA_BASE_URL` | Ollama 서버 주소 | `http://ollama:11434` (K8s 내부 ClusterIP) |
 | `TELEGRAM_BOT_TOKEN` | 텔레그램 봇 토큰 | - |
 | `TELEGRAM_CHAT_ID` | 텔레그램 채팅 ID | - |
 | `JWT_SECRET_KEY` | JWT 시크릿 | `change-me-in-production` |
