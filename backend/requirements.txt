@@ -13,4 +13,3 @@ cryptography==44.0.0
 websockets==14.1
 mplfinance==0.12.10b0
 matplotlib==3.10.0
-kubernetes==31.0.0
