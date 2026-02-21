@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k8s-daily-monitor
+  namespace: trading-system
+spec:
+  schedule: "0 23 * * 0-4"  # 08:00 KST = 23:00 UTC 전일 (일-목 실행 → 월-금 KST)
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: k8s-monitor  # K8s API 읽기 권한
+          containers:
+            - name: monitor
+              image: trading-system/worker:latest
+              command: ["python", "-m", "workers.k8s_daily_monitor"]
+              envFrom:
+                - secretRef:
+                    name: trading-db-creds
+                - configMapRef:
+                    name: trading-config
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql+asyncpg://trading:$(POSTGRES_PASSWORD)@postgres:5432/trading"
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "256Mi"
+                  cpu: "300m"
+          restartPolicy: OnFailure
