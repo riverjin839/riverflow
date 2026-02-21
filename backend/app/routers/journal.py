@@ -1,8 +1,10 @@
 """매매일지 CRUD 라우터."""
 
+import logging
 from datetime import date, datetime, timezone
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -15,6 +17,12 @@ from ..models.journal import TradeJournal
 from ..services.broker.kis_broker import KISBroker
 
 router = APIRouter(prefix="/api/journal", tags=["journal"])
+logger = logging.getLogger(__name__)
+
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 class JournalCreate(BaseModel):
@@ -74,6 +82,41 @@ async def create_journal(
     await db.commit()
     await db.refresh(journal)
     return journal
+
+
+@router.get("/search-stock")
+async def search_stock(
+    q: str = Query(..., min_length=1, description="종목코드 또는 종목명"),
+    _: dict = Depends(verify_token),
+):
+    """종목 검색 (코드 또는 이름으로 검색)."""
+    results: list[dict] = []
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        # Naver 자동완성 API
+        try:
+            resp = await client.get(
+                "https://ac.stock.naver.com/ac",
+                params={"q": q, "target": "stock"},
+                headers={"User-Agent": _UA, "Referer": "https://m.stock.naver.com/"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get("items", [])
+                for group in items:
+                    for item in group:
+                        code = item.get("code", "")
+                        name = item.get("name", "")
+                        market = item.get("typeCode", "")  # KOSPI, KOSDAQ 등
+                        if code and name:
+                            results.append({
+                                "ticker": code,
+                                "ticker_name": name,
+                                "market": market,
+                            })
+        except Exception as e:
+            logger.warning("Stock search error: %s", e)
+
+    return {"results": results[:20]}
 
 
 @router.get("/{journal_id}", response_model=JournalResponse)
