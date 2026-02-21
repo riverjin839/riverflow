@@ -48,6 +48,9 @@ class JournalResponse(BaseModel):
     profit_rate: Optional[float]
     buy_reason: Optional[str]
     ai_feedback: Optional[str]
+    ai_verdict: Optional[str] = None
+    ai_score: Optional[int] = None
+    ai_evaluation: Optional[dict] = None
     tags: Optional[list[str]]
 
     model_config = {"from_attributes": True}

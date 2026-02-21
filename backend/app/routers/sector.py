@@ -81,6 +81,10 @@ async def get_latest_sectors(
         query += "WHERE is_leading = true "
     query += "ORDER BY analyzed_at DESC LIMIT :limit"
 
-    result = await db.execute(text(query), {"limit": limit})
-    rows = result.mappings().all()
-    return [dict(r) for r in rows]
+    try:
+        result = await db.execute(text(query), {"limit": limit})
+        rows = result.mappings().all()
+        return [dict(r) for r in rows]
+    except Exception:
+        await db.rollback()
+        return []

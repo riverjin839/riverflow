@@ -5,6 +5,22 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/use-auth";
 
 /* ── Types ── */
+interface EvalItem {
+  score: number;
+  comment: string;
+}
+
+interface AIEvaluation {
+  items?: {
+    entry_timing?: EvalItem;
+    reason_quality?: EvalItem;
+    principle_adherence?: EvalItem;
+    risk_management?: EvalItem;
+    exit_strategy?: EvalItem;
+  };
+  improvement?: string;
+}
+
 interface JournalEntry {
   id: number;
   trade_date: string;
@@ -16,6 +32,9 @@ interface JournalEntry {
   profit_rate: number | null;
   buy_reason: string | null;
   ai_feedback: string | null;
+  ai_verdict: string | null;
+  ai_score: number | null;
+  ai_evaluation: AIEvaluation | null;
   tags: string[] | null;
 }
 
@@ -233,6 +252,41 @@ export default function JournalPage() {
       setDetail(null);
       await load();
     } catch { /* ignore */ }
+  };
+
+  // AI 평가
+  const [evaluating, setEvaluating] = useState(false);
+
+  const handleEvaluate = async (id: number) => {
+    if (!token) return;
+    setEvaluating(true);
+    try {
+      const res = await apiFetch<{
+        journal_id: number;
+        feedback: string;
+        verdict: string | null;
+        score: number | null;
+        evaluation: AIEvaluation | null;
+        sources: string[];
+      }>("/api/ai/feedback", {
+        token,
+        method: "POST",
+        body: JSON.stringify({ journal_id: id }),
+      });
+      // 업데이트된 데이터 반영
+      setDetail((prev) =>
+        prev ? { ...prev, ai_feedback: res.feedback, ai_verdict: res.verdict, ai_score: res.score, ai_evaluation: res.evaluation } : null
+      );
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === id ? { ...e, ai_feedback: res.feedback, ai_verdict: res.verdict, ai_score: res.score, ai_evaluation: res.evaluation } : e
+        )
+      );
+    } catch (err) {
+      alert(`AI 평가 실패: ${err instanceof Error ? err.message : "오류"}`);
+    } finally {
+      setEvaluating(false);
+    }
   };
 
   if (!checked || !token) return null;
@@ -477,8 +531,8 @@ export default function JournalPage() {
                 <th className="px-4 py-2.5">종목</th>
                 <th className="px-4 py-2.5 text-right">매수가</th>
                 <th className="px-4 py-2.5 text-right">매도가</th>
-                <th className="px-4 py-2.5 text-right">수량</th>
                 <th className="px-4 py-2.5 text-right">수익률</th>
+                <th className="px-4 py-2.5 text-center">AI 평가</th>
                 <th className="px-4 py-2.5">태그</th>
               </tr>
             </thead>
@@ -501,11 +555,22 @@ export default function JournalPage() {
                     <td className="px-4 py-2.5 text-right tabular-nums text-gray-300">
                       {e.sell_price != null ? e.sell_price.toLocaleString() : "―"}
                     </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-300">
-                      {e.quantity != null ? e.quantity.toLocaleString() : "―"}
-                    </td>
                     <td className={`px-4 py-2.5 text-right tabular-nums font-medium ${rateColor}`}>
                       {e.profit_rate != null ? `${rate >= 0 ? "+" : ""}${rate.toFixed(2)}%` : "―"}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {e.ai_verdict ? (
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                          e.ai_verdict === "원칙준수" ? "bg-emerald-900/30 text-emerald-400" :
+                          e.ai_verdict === "원칙위반" ? "bg-red-900/30 text-red-400" :
+                          "bg-yellow-900/30 text-yellow-400"
+                        }`}>
+                          {e.ai_verdict}
+                          {e.ai_score != null && <span className="text-[9px] opacity-70">{e.ai_score}/10</span>}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-gray-700">미평가</span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5">
                       {e.tags && e.tags.length > 0 ? (
@@ -527,7 +592,7 @@ export default function JournalPage() {
       {/* ── 상세 모달 ── */}
       {detail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setDetail(null)}>
-          <div className="mx-4 w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="mx-4 w-full max-w-lg max-h-[90vh] overflow-auto rounded-2xl border border-gray-700 bg-gray-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-start justify-between">
               <div>
                 <h3 className="text-lg font-bold text-gray-200">
@@ -574,7 +639,85 @@ export default function JournalPage() {
               </div>
             )}
 
-            {detail.ai_feedback && (
+            {/* ── AI 평가 결과 ── */}
+            {detail.ai_verdict && (
+              <div className="mb-4 rounded-xl border border-gray-800 bg-gray-950/80 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-gray-400">AI 매매 평가</p>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                      detail.ai_verdict === "원칙준수" ? "bg-emerald-900/40 text-emerald-400" :
+                      detail.ai_verdict === "원칙위반" ? "bg-red-900/40 text-red-400" :
+                      "bg-yellow-900/40 text-yellow-400"
+                    }`}>
+                      {detail.ai_verdict}
+                    </span>
+                    {detail.ai_score != null && (
+                      <span className={`text-lg font-bold ${
+                        detail.ai_score >= 8 ? "text-emerald-400" :
+                        detail.ai_score >= 5 ? "text-yellow-400" : "text-red-400"
+                      }`}>
+                        {detail.ai_score}<span className="text-xs text-gray-600">/10</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 항목별 점수 */}
+                {detail.ai_evaluation?.items && (
+                  <div className="space-y-2">
+                    {(
+                      [
+                        ["entry_timing", "진입 타이밍"],
+                        ["reason_quality", "매수 근거"],
+                        ["principle_adherence", "원칙 준수"],
+                        ["risk_management", "리스크 관리"],
+                        ["exit_strategy", "매도 전략"],
+                      ] as const
+                    ).map(([key, label]) => {
+                      const item = detail.ai_evaluation?.items?.[key];
+                      if (!item) return null;
+                      const pct = (item.score / 10) * 100;
+                      return (
+                        <div key={key}>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-gray-500">{label}</span>
+                            <span className={`font-medium ${
+                              item.score >= 8 ? "text-emerald-400" :
+                              item.score >= 5 ? "text-yellow-400" : "text-red-400"
+                            }`}>
+                              {item.score}/10
+                            </span>
+                          </div>
+                          <div className="mt-0.5 h-1.5 w-full rounded-full bg-gray-800">
+                            <div
+                              className={`h-1.5 rounded-full transition-all ${
+                                item.score >= 8 ? "bg-emerald-500" :
+                                item.score >= 5 ? "bg-yellow-500" : "bg-red-500"
+                              }`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          {item.comment && (
+                            <p className="mt-0.5 text-[10px] text-gray-600">{item.comment}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* 종합 피드백 */}
+                {detail.ai_feedback && (
+                  <div className="border-t border-gray-800 pt-2">
+                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-400">{detail.ai_feedback}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AI 피드백만 있고 verdict 없는 경우 (이전 방식 호환) */}
+            {!detail.ai_verdict && detail.ai_feedback && (
               <div className="mb-4">
                 <p className="mb-1 text-[10px] text-gray-500">AI 피드백</p>
                 <p className="whitespace-pre-wrap rounded-lg border border-blue-900/30 bg-blue-950/20 p-3 text-sm text-blue-300">{detail.ai_feedback}</p>
@@ -589,10 +732,28 @@ export default function JournalPage() {
               </div>
             )}
 
-            <button onClick={() => handleDelete(detail.id)}
-              className="w-full rounded-lg border border-red-900/30 py-2 text-sm text-red-400 hover:bg-red-900/20 transition-colors">
-              삭제
-            </button>
+            {/* 버튼 영역 */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleEvaluate(detail.id)}
+                disabled={evaluating}
+                className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40 transition-colors"
+              >
+                {evaluating ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" className="opacity-75" />
+                    </svg>
+                    평가 중...
+                  </span>
+                ) : detail.ai_verdict ? "AI 재평가" : "AI 매매 평가"}
+              </button>
+              <button onClick={() => handleDelete(detail.id)}
+                className="rounded-lg border border-red-900/30 px-4 py-2 text-sm text-red-400 hover:bg-red-900/20 transition-colors">
+                삭제
+              </button>
+            </div>
           </div>
         </div>
       )}

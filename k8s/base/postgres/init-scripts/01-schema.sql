@@ -22,6 +22,9 @@ CREATE TABLE trade_journal (
     profit_rate DECIMAL(6,2),
     buy_reason TEXT,
     ai_feedback TEXT,
+    ai_verdict VARCHAR(20),              -- 원칙준수 / 원칙위반 / 판단보류
+    ai_score SMALLINT,                   -- 종합 점수 (1~10)
+    ai_evaluation JSONB,                 -- 항목별 상세 평가
     chart_image_path VARCHAR(255),
     tags TEXT[],
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -150,6 +153,14 @@ CREATE TABLE chat_messages (
     role VARCHAR(10) NOT NULL,          -- user / assistant
     content TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 브로커 API 키 (암호화 저장)
+CREATE TABLE broker_settings (
+    id SERIAL PRIMARY KEY,
+    key VARCHAR(50) UNIQUE NOT NULL,
+    value TEXT NOT NULL,                   -- Fernet(AES-256) 암호화된 값
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- =============================================================

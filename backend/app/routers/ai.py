@@ -505,8 +505,36 @@ async def recommend_stock(
 
 
 # ══════════════════════════════════════
-# 4. 매매일지 AI 피드백 (기존)
+# 4. 매매복기 AI 평가
 # ══════════════════════════════════════
+
+REVIEW_SYSTEM_PROMPT = """당신은 한국 증시 전문 매매 코치입니다.
+
+사용자의 투자 원칙/학습 자료와 매매 기록을 비교 분석하여 평가합니다.
+
+반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만 출력하세요.
+
+{
+  "verdict": "원칙준수" 또는 "원칙위반" 또는 "판단보류",
+  "score": 1~10 (종합 점수),
+  "items": {
+    "entry_timing": {"score": 1~10, "comment": "진입 타이밍 평가"},
+    "reason_quality": {"score": 1~10, "comment": "매수 근거 충분성"},
+    "principle_adherence": {"score": 1~10, "comment": "투자 원칙 준수도"},
+    "risk_management": {"score": 1~10, "comment": "리스크 관리"},
+    "exit_strategy": {"score": 1~10, "comment": "매도/청산 전략"}
+  },
+  "feedback": "종합 피드백 (2~3문장)",
+  "improvement": "다음 매매에서 개선할 점 (1~2문장)"
+}
+
+평가 기준:
+- score 8~10: 원칙을 잘 지킨 모범적 매매
+- score 5~7: 대체로 괜찮으나 일부 개선 필요
+- score 1~4: 원칙 위반 또는 충동매매 가능성
+- 학습자료에 투자 원칙이 있으면 해당 원칙 기준으로 엄격히 평가
+- 학습자료가 없으면 일반적인 매매 원칙(손절, 분할매수, 근거 있는 진입 등)으로 평가"""
+
 
 class FeedbackRequest(BaseModel):
     journal_id: int
@@ -515,6 +543,10 @@ class FeedbackRequest(BaseModel):
 class FeedbackResponse(BaseModel):
     journal_id: int
     feedback: str
+    verdict: str | None = None
+    score: int | None = None
+    evaluation: dict | None = None
+    sources: list[str] = []
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
@@ -523,32 +555,106 @@ async def generate_feedback(
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(verify_token),
 ):
-    """매매일지에 대한 AI 피드백 생성"""
+    """매매복기 AI 평가 - 학습자료 기반 원칙 준수 여부 평가."""
     journal = await db.get(TradeJournal, req.journal_id)
     if not journal:
         raise HTTPException(status_code=404, detail="매매일지를 찾을 수 없습니다")
 
+    # 1. RAG: 관련 학습자료 검색
+    embedding_svc = EmbeddingService()
+    sources: list[str] = []
+    context_text = ""
+    try:
+        search_query = f"{journal.ticker_name or journal.ticker} 매매 원칙 투자 전략"
+        if journal.buy_reason:
+            search_query += f" {journal.buy_reason[:100]}"
+        context_docs = await _retrieve_context(db, search_query, embedding_svc, top_k=5)
+        sources = [d["title"] for d in context_docs]
+        if context_docs:
+            context_text = "\n[사용자 투자 원칙/학습 자료]\n"
+            for d in context_docs:
+                context_text += f"- {d['content'][:400]}\n"
+    except Exception:
+        pass
+    finally:
+        await embedding_svc.close()
+
+    # 2. 프롬프트 구성
+    prompt = (
+        f"다음 매매 기록을 평가하세요:\n\n"
+        f"종목: {journal.ticker_name or ''} ({journal.ticker})\n"
+        f"매매일: {journal.trade_date}\n"
+        f"매수가: {journal.buy_price or '미입력'}\n"
+        f"매도가: {journal.sell_price or '미매도'}\n"
+        f"수량: {journal.quantity or '미입력'}\n"
+        f"수익률: {journal.profit_rate}%\n" if journal.profit_rate is not None else ""
+        f"매수 사유: {journal.buy_reason or '미입력'}\n"
+        f"태그: {', '.join(journal.tags) if journal.tags else '없음'}\n"
+        f"{context_text}\n"
+        f"위 매매 기록을 투자 원칙/학습 자료 기준으로 평가하여 JSON으로 응답하세요."
+    )
+
+    # 3. LLM 호출
     llm = LLMClient()
     try:
-        prompt = (
-            f"다음 매매 기록을 분석하고 피드백을 제공해주세요:\n"
-            f"종목: {journal.ticker} ({journal.ticker_name})\n"
-            f"매수가: {journal.buy_price}\n"
-            f"매도가: {journal.sell_price}\n"
-            f"수익률: {journal.profit_rate}%\n"
-            f"매수 사유: {journal.buy_reason}\n"
-        )
-        feedback = await llm.generate(
-            prompt=prompt,
-            system="당신은 주식 매매 전문 코치입니다. 매매 기록을 분석하고 개선점을 제안하세요.",
-        )
+        raw = await llm.generate(prompt=prompt, system=REVIEW_SYSTEM_PROMPT)
+        parsed = llm._extract_json(raw)
+
+        verdict = str(parsed.get("verdict", "판단보류"))
+        score = max(1, min(10, int(parsed.get("score", 5))))
+        items = parsed.get("items", {})
+        feedback_text = str(parsed.get("feedback", ""))
+        improvement = str(parsed.get("improvement", ""))
+
+        full_feedback = feedback_text
+        if improvement:
+            full_feedback += f"\n\n[개선점] {improvement}"
+
+        evaluation = {
+            "items": items,
+            "improvement": improvement,
+        }
+
+    except Exception as e:
+        logger.warning("매매 평가 JSON 파싱 실패, 일반 피드백 생성: %s", e)
+        # 파싱 실패 시 일반 텍스트 피드백
+        try:
+            prompt_fallback = (
+                f"다음 매매 기록을 분석하고 피드백을 제공해주세요:\n"
+                f"종목: {journal.ticker} ({journal.ticker_name})\n"
+                f"매수가: {journal.buy_price}\n"
+                f"매도가: {journal.sell_price}\n"
+                f"수익률: {journal.profit_rate}%\n"
+                f"매수 사유: {journal.buy_reason}\n"
+                f"{context_text}"
+            )
+            full_feedback = await llm.generate(
+                prompt=prompt_fallback,
+                system="당신은 주식 매매 전문 코치입니다. 학습 자료 기반으로 매매 기록을 분석하고 개선점을 제안하세요.",
+            )
+        except Exception:
+            full_feedback = "AI 평가 생성에 실패했습니다."
+        verdict = "판단보류"
+        score = 5
+        evaluation = {}
     finally:
         await llm.close()
 
-    journal.ai_feedback = feedback
+    # 4. DB 저장
+    journal.ai_feedback = full_feedback
+    journal.ai_verdict = verdict
+    journal.ai_score = score
+    journal.ai_evaluation = evaluation
     await db.commit()
 
-    return FeedbackResponse(journal_id=journal.id, feedback=feedback)
+    return FeedbackResponse(
+        journal_id=journal.id,
+        feedback=full_feedback,
+        verdict=verdict,
+        score=score,
+        evaluation=evaluation,
+        sources=sources,
+    )
 
 
 # ── 유틸 ──
