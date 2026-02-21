@@ -41,7 +41,7 @@ spec:
               ollama serve &
               SERVE_PID=$!
               echo "Ollama 서버 기동 대기 중..."
-              until curl -sf http://localhost:11434/api/tags > /dev/null; do
+              until ollama list > /dev/null 2>&1; do
                 sleep 3
               done
               echo "모델 pull 시작 (캐시 존재 시 즉시 완료)"
