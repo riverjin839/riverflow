@@ -22,6 +22,9 @@ CREATE TABLE trade_journal (
     profit_rate DECIMAL(6,2),
     buy_reason TEXT,
     ai_feedback TEXT,
+    ai_verdict VARCHAR(20),              -- 원칙준수 / 원칙위반 / 판단보류
+    ai_score SMALLINT,                   -- 종합 점수 (1~10)
+    ai_evaluation JSONB,                 -- 항목별 상세 평가
     chart_image_path VARCHAR(255),
     tags TEXT[],
     created_at TIMESTAMPTZ DEFAULT NOW()

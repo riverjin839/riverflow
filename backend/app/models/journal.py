@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
-from sqlalchemy import ARRAY, DECIMAL, Date, Integer, String, Text
+from sqlalchemy import ARRAY, DECIMAL, Date, Integer, SmallInteger, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..core.database import Base
@@ -19,6 +20,9 @@ class TradeJournal(Base):
     profit_rate: Mapped[float | None] = mapped_column(DECIMAL(6, 2))
     buy_reason: Mapped[str | None] = mapped_column(Text)
     ai_feedback: Mapped[str | None] = mapped_column(Text)
+    ai_verdict: Mapped[str | None] = mapped_column(String(20))
+    ai_score: Mapped[int | None] = mapped_column(SmallInteger)
+    ai_evaluation: Mapped[dict | None] = mapped_column(JSONB)
     chart_image_path: Mapped[str | None] = mapped_column(String(255))
     tags: Mapped[list | None] = mapped_column(ARRAY(Text))
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
