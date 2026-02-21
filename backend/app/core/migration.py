@@ -83,6 +83,41 @@ MIGRATION_SQL = [
     )
     """,
 
+    # ── news_articles 컬럼 추가 ──
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'news_articles' AND column_name = 'impact_score'
+        ) THEN
+            ALTER TABLE news_articles ADD COLUMN impact_score SMALLINT DEFAULT 0;
+        END IF;
+    END$$
+    """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'news_articles' AND column_name = 'theme'
+        ) THEN
+            ALTER TABLE news_articles ADD COLUMN theme VARCHAR(100);
+        END IF;
+    END$$
+    """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'news_articles' AND column_name = 'is_leading'
+        ) THEN
+            ALTER TABLE news_articles ADD COLUMN is_leading BOOLEAN DEFAULT false;
+        END IF;
+    END$$
+    """,
+
     # ── trade_journal 컬럼 추가 ──
     """
     DO $$

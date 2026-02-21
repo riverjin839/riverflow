@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://trading:trading@localhost:5432/trading"
 
     # Ollama (호스트에서 실행, K8s 내부에서 API 호출)
-    OLLAMA_BASE_URL: str = "http://host.k3d.internal:11434"
+    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
     OLLAMA_MODEL: str = "llama3"
     EMBEDDING_MODEL: str = "bge-m3"
 
