@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telegram-listener
+  namespace: trading-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telegram-listener
+  template:
+    metadata:
+      labels:
+        app: telegram-listener
+    spec:
+      containers:
+        - name: listener
+          image: trading-system/worker:latest
+          command: ["python", "-m", "workers.telegram_listener"]
+          envFrom:
+            - secretRef:
+                name: trading-db-creds
+            - secretRef:
+                name: tg-credentials      # TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING
+            - configMapRef:
+                name: trading-config
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://trading:$(POSTGRES_PASSWORD)@postgres:5432/trading"
+            - name: TG_CHANNEL_IDS
+              value: ""  # 구독할 채널 ID/username (쉼표 구분) — overlays에서 오버라이드
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
