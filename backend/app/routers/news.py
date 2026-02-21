@@ -27,7 +27,7 @@ class NewsResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-@router.get("/", response_model=list[NewsResponse])
+@router.get("", response_model=list[NewsResponse])
 async def list_news(
     skip: int = 0,
     limit: int = 20,

@@ -155,6 +155,14 @@ CREATE TABLE chat_messages (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 브로커 API 키 (암호화 저장)
+CREATE TABLE broker_settings (
+    id SERIAL PRIMARY KEY,
+    key VARCHAR(50) UNIQUE NOT NULL,
+    value TEXT NOT NULL,                   -- Fernet(AES-256) 암호화된 값
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- =============================================================
 -- 4. 인덱스
 -- =============================================================
