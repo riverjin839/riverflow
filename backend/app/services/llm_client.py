@@ -41,7 +41,7 @@ class LLMClient:
         self.model = model or settings.OLLAMA_MODEL
         self.client = httpx.AsyncClient(timeout=120.0)
 
-    async def generate(self, prompt: str, system: str = "") -> str:
+    async def generate(self, prompt: str, system: str = "", num_predict: int = 600) -> str:
         """텍스트 생성"""
         resp = await self.client.post(
             f"{self.base_url}/api/generate",
@@ -50,12 +50,13 @@ class LLMClient:
                 "prompt": prompt,
                 "system": system,
                 "stream": False,
+                "options": {"num_predict": num_predict},
             },
         )
         resp.raise_for_status()
         return resp.json().get("response", "")
 
-    async def chat(self, messages: list[dict]) -> str:
+    async def chat(self, messages: list[dict], num_predict: int = 800) -> str:
         """채팅 형식 생성"""
         resp = await self.client.post(
             f"{self.base_url}/api/chat",
@@ -63,6 +64,7 @@ class LLMClient:
                 "model": self.model,
                 "messages": messages,
                 "stream": False,
+                "options": {"num_predict": num_predict},
             },
         )
         resp.raise_for_status()

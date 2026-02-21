@@ -40,7 +40,7 @@ CHAT_SYSTEM_PROMPT = """당신은 Riverflow AI - 한국 증시 전문 투자 어
 - 시장 상황 분석 및 브리핑
 
 규칙:
-- 한국어로 답변
+- 반드시 한국어로만 답변하세요. Do NOT respond in English under any circumstances.
 - 근거 기반 분석 (데이터, 차트 패턴, 수급 등)
 - 리스크 관리 항상 언급
 - 투자 판단의 최종 결정은 사용자에게 있음을 명시
@@ -314,7 +314,8 @@ async def chat(
         messages.append({"role": msg.role, "content": msg.content})
 
     # 현재 메시지 + 컨텍스트
-    user_prompt = req.message
+    # Llama 3는 user 메시지 언어를 우선하므로 한국어 지시를 user 앞에 명시
+    user_prompt = "반드시 한국어로만 답변하세요.\n\n" + req.message
     if context_text or stock_info:
         user_prompt += "\n\n" + stock_info + context_text
 
