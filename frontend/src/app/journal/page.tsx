@@ -221,10 +221,20 @@ export default function JournalPage() {
       profitRate = parseFloat(((sell - buy) / buy * 100).toFixed(2));
     }
 
+    // 드롭다운에서 선택했으면 form.ticker 사용,
+    // 직접 입력 시 "종목명 (123456)" 패턴에서 코드 추출, 또는 입력값 그대로 사용
+    let tickerCode = form.ticker;
+    let tickerName = form.ticker_name || null;
+    if (!tickerCode && stockQuery.trim()) {
+      const m = stockQuery.match(/\((\d{6})\)/);
+      tickerCode = m ? m[1] : stockQuery.trim();
+      tickerName = tickerName || stockQuery.split("(")[0].trim() || null;
+    }
+
     const payload = {
       trade_date: form.trade_date,
-      ticker: form.ticker,
-      ticker_name: form.ticker_name || null,
+      ticker: tickerCode,
+      ticker_name: tickerName,
       buy_price: buy || null,
       sell_price: sell || null,
       quantity: parseInt(form.quantity, 10) || null,
@@ -507,7 +517,7 @@ export default function JournalPage() {
 
           {submitError && <p className="text-xs text-red-400">{submitError}</p>}
 
-          <button type="submit" disabled={submitting || !form.ticker}
+          <button type="submit" disabled={submitting || (!form.ticker && !stockQuery.trim())}
             className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40 transition-colors">
             {submitting ? "등록 중..." : "매매일지 등록"}
           </button>

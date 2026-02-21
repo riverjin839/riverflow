@@ -41,7 +41,7 @@ class NewsResponse(BaseModel):
     impact_score: int = 0
     theme: str | None = None
     is_leading: bool = False
-    crawled_at: str
+    crawled_at: datetime  # str이면 Pydantic v2에서 datetime 직렬화 실패
 
     model_config = {"from_attributes": True}
 

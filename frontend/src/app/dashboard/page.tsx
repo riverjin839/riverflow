@@ -92,7 +92,17 @@ export default function DashboardPage() {
       apiFetch<AutoTradeStatus>("/api/auto-trade/status", { token }),
     ]);
     if (s.status === "fulfilled") setSupply(s.value);
-    if (n.status === "fulfilled") setNews(n.value);
+    if (n.status === "fulfilled") {
+      // 고영향 뉴스가 없으면 최신 뉴스로 폴백
+      if (n.value.length > 0) {
+        setNews(n.value);
+      } else {
+        try {
+          const fallback = await apiFetch<NewsItem[]>("/api/news?limit=10", { token });
+          setNews(fallback);
+        } catch { /* ignore */ }
+      }
+    }
     if (sec.status === "fulfilled") setSectors(sec.value);
     if (t.status === "fulfilled") setTrade(t.value);
     setLoading(false);
@@ -168,11 +178,16 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Left: High‑impact news */}
         <section className="rounded-xl border border-gray-800 bg-gray-900/40 p-5">
-          <h2 className="mb-4 text-sm font-semibold text-gray-300">핵심 뉴스 (영향도 8+)</h2>
+          <h2 className="mb-4 text-sm font-semibold text-gray-300">
+            뉴스
+            {news.some((n) => n.impact_score >= 8) && (
+              <span className="ml-1.5 text-xs font-normal text-gray-500">영향도 8+</span>
+            )}
+          </h2>
           {loading && news.length === 0 ? (
             <p className="text-xs text-gray-600">로딩 중…</p>
           ) : news.length === 0 ? (
-            <p className="text-xs text-gray-600">고영향 뉴스 없음</p>
+            <p className="text-xs text-gray-600">뉴스 없음 (크롤러 실행 대기 중)</p>
           ) : (
             <ul className="space-y-3">
               {news.map((n) => (
