@@ -1,6 +1,9 @@
 """뉴스 검색 라우터."""
 
-from fastapi import APIRouter, Depends, Query
+import os
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +14,22 @@ from ..models.news import NewsArticle
 from ..services.embedding import EmbeddingService
 
 router = APIRouter(prefix="/api/news", tags=["news"])
+
+_INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "change-me-internal")
+
+
+def verify_internal_key(x_api_key: str = Header(..., alias="X-API-Key")) -> None:
+    """내부 서비스(브릿지, 워커) 전용 API Key 검증"""
+    if x_api_key != _INTERNAL_API_KEY:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+
+
+class NewsIngestRequest(BaseModel):
+    source: str
+    title: str
+    content: str = ""
+    url: str = ""
+    keywords: list[str] = []
 
 
 class NewsResponse(BaseModel):
@@ -49,6 +68,38 @@ async def list_news(
     except Exception:
         await db.rollback()
         return []
+
+
+@router.post("/ingest", status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_internal_key)])
+async def ingest_news(req: NewsIngestRequest, db: AsyncSession = Depends(get_db)):
+    """내부 서비스에서 수집한 뉴스를 DB에 저장.
+
+    중복 URL이면 409를 반환하고, URL이 없으면 무조건 삽입.
+    """
+    if req.url:
+        row = await db.execute(
+            text("SELECT id FROM news_articles WHERE url = :url"),
+            {"url": req.url},
+        )
+        if row.fetchone():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Duplicate URL")
+
+    await db.execute(
+        text(
+            "INSERT INTO news_articles (source, title, content, url, keywords, crawled_at) "
+            "VALUES (:source, :title, :content, :url, :keywords, :crawled_at)"
+        ),
+        {
+            "source": req.source,
+            "title": req.title,
+            "content": req.content,
+            "url": req.url,
+            "keywords": req.keywords,
+            "crawled_at": datetime.now(timezone.utc),
+        },
+    )
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.get("/search")

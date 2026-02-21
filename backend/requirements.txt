@@ -13,3 +13,7 @@ cryptography==44.0.0
 websockets==14.1
 mplfinance==0.12.10b0
 matplotlib==3.10.0
+# Task 2: 네이버 카페 크롤링
+playwright==1.49.0
+# Task 3: 텔레그램 리스너
+telethon==1.37.0
